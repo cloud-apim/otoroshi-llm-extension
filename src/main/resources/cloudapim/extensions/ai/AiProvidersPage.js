@@ -660,11 +660,55 @@ class TtftTimeoutWarning extends Component {
   }
 }
 
+// a switch that is on until it is turned off: an absent value is the default, true. Read from the entity at `path`:
+// the form gives a field its default value in place of `false`
+class TrueByDefaultBooleanInput extends Component {
+  render() {
+    const BooleanInput = dependencies.Components.Inputs.BooleanInput;
+    return React.createElement(BooleanInput, {
+      label: this.props.label,
+      help: this.props.help,
+      disabled: this.props.disabled,
+      value: _.get(this.props.rawValue || {}, this.props.path) !== false,
+      onChange: (v) => this.props.onChange(v),
+    });
+  }
+}
+
+// a number shown with its default when it is not set: emptied or 0, it is not set, and the default applies
+class NumberWithDefaultInput extends Component {
+  render() {
+    const NumberInput = dependencies.Components.Inputs.NumberInput;
+    const value = this.props.value;
+    return React.createElement(NumberInput, {
+      label: this.props.label,
+      help: this.props.help,
+      suffix: this.props.suffix,
+      disabled: this.props.disabled,
+      value: (typeof value === 'number' && value > 0) ? value : this.props.defaultNumber,
+      onChange: (n) => this.props.onChange(n > 0 ? n : undefined),
+    });
+  }
+}
+
 // the provider kinds that do not build their client on a base url, and cannot have targets
 const KindsWithoutTargets = ['azure-openai', 'cloudflare', 'jlama', 'ovh-ai-endpoints', 'loadbalancer', 'otoroshi'];
 
-// adds the first token timeout, the targets and the pushed state to the form of a provider kind
-function withTargetsFlow(flow, state) {
+// the circuit breaker of a provider: `open_on_quota` acts even when the circuit is not enabled, a load balancer only
+// reads the failure streak
+function circuitBreakerFlow(state, withQuota) {
+  const settings = ((state.options || {}).circuit_breaker) || {};
+  const items = ['>>>Circuit breaker', 'options.circuit_breaker.enabled'];
+  if (settings.enabled) {
+    items.push('options.circuit_breaker.consecutive_failures');
+    items.push('options.circuit_breaker.cooldown');
+  }
+  if (withQuota) items.push('options.circuit_breaker.open_on_quota');
+  return items;
+}
+
+// adds the first token timeout, the targets, the circuit breaker and the pushed state to the form of a provider kind
+function withResilienceFlow(flow, state) {
   const items = flow.filter(i => !!i);
   const out = [];
   const supportsTargets = !!state.provider && KindsWithoutTargets.indexOf(state.provider) < 0 && items.indexOf('connection.base_url') > -1;
@@ -679,7 +723,11 @@ function withTargetsFlow(flow, state) {
         out.push('connection.targets_options.when_none_available');
       }
     }
+    if (item === '>>>Tester' && state.provider === 'loadbalancer') {
+      circuitBreakerFlow(state, false).forEach(i => out.push(i));
+    }
     if (item === '>>>Provider fallback' && state.provider !== 'loadbalancer' && state.provider !== 'otoroshi') {
+      circuitBreakerFlow(state, true).forEach(i => out.push(i));
       out.push('>>>Pushed state');
       out.push('pushed_state.enabled');
       if ((state.pushed_state || {}).enabled) {
@@ -991,6 +1039,29 @@ class AiProvidersPage extends Component {
           { label: 'Reject (the fallback takes over)', value: 'reject' },
           { label: 'Try a saturated target', value: 'try_saturated' },
         ]
+      },
+    },
+    'options.circuit_breaker.enabled': {
+      type: 'bool',
+      props: {
+        label: 'Circuit breaker',
+        help: 'after a streak of failures the circuit opens for a while: the provider is skipped and its fallback answers right away. With targets, each target has a circuit of its own. On a load balancer, the providers whose circuit is open are left out',
+      },
+    },
+    'options.circuit_breaker.consecutive_failures': {
+      type: NumberWithDefaultInput,
+      props: { label: 'Consecutive failures', defaultNumber: 5, help: 'how many failures in a row open the circuit (5 by default), a success in between starts the count again' },
+    },
+    'options.circuit_breaker.cooldown': {
+      type: NumberWithDefaultInput,
+      props: { label: 'Cooldown', suffix: 'ms.', defaultNumber: 30000, help: 'how long an open circuit keeps the provider aside (30 seconds by default). Then one call goes through: a success closes the circuit, a failure opens it again' },
+    },
+    'options.circuit_breaker.open_on_quota': {
+      type: TrueByDefaultBooleanInput,
+      props: {
+        path: 'options.circuit_breaker.open_on_quota',
+        label: 'Open on quota refusal',
+        help: 'a provider that refuses a call on quota grounds will refuse the next ones: its circuit opens at once, until the moment it said to come back, whether the circuit breaker is enabled or not',
       },
     },
     'pushed_state.enabled': {
@@ -1676,7 +1747,7 @@ class AiProvidersPage extends Component {
     aiStudioColumn,
   ];
 
-  formFlow = (state) => withTargetsFlow(this.baseFormFlow(state), state);
+  formFlow = (state) => withResilienceFlow(this.baseFormFlow(state), state);
 
   baseFormFlow = (state) => {
     state.cache = state.cache || 'none'
