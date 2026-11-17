@@ -116,18 +116,18 @@ class StreamErrorsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     chatClient.call(ChatPrompt(Seq(ChatMessage.userStrInput("hello"))), TypedMap.empty, Json.obj())(using otoroshi.executionContext, env).awaitf(30.seconds)
   }
 
-  test("a large error body of a streamed call reaches the client instead of a 502") {
+  test("a large error body of a streamed call reaches the client, with the status of the provider, instead of a 502") {
     val resp = client.call("POST", s"http://streamerrors.oto.tools:${port}/responses", Map.empty, Some(Json.obj(
       "model" -> "mistral-medium-latest",
       "input" -> "hello",
       "stream" -> true,
     ))).awaitf(30.seconds)
-    assertEquals(resp.status, 400, resp.bodyAsBytes.utf8String.take(500))
+    assertEquals(resp.status, 422, resp.bodyAsBytes.utf8String.take(500))
     assertEquals(Json.parse(resp.bodyAsBytes.utf8String), largeError)
   }
 
   test("an error body sent slowly on a streamed call is read") {
-    assertEquals(stream(slow), Left(slowError))
+    assertEquals(stream(slow), Left(Json.obj("status" -> 400, "body" -> slowError)))
   }
 
   test("an error body that is not json is kept with the status") {

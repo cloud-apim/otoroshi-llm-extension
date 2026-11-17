@@ -64,7 +64,7 @@ object OpenAiCompatProxy {
           }
           if (stream) {
             client.tryStream(ChatPrompt(messages), ctx.attrs, jsonBody).map {
-              case Left(err) => Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(err)))
+              case Left(err) => Left(ChatErrorResults.openai(err))
               case Right(source) => {
                 val finalSource = source
                   .map(_.openaiEventSource(env))
@@ -74,7 +74,7 @@ object OpenAiCompatProxy {
             }
           } else {
             client.call(ChatPrompt(messages), ctx.attrs, jsonBody).map {
-              case Left(err) => Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(err)))
+              case Left(err) => Left(ChatErrorResults.openai(err))
               case Right(response) => Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(response.openaiJson(client.computeModel(jsonBody).getOrElse("none"), env))
                 .withHeaders(response.metadata.cacheHeaders.toSeq*)), None))
             }
@@ -196,7 +196,7 @@ class OpenAiCompletionProxy extends NgBackendCall {
           }
           if (stream) {
             client.tryCompletionStream(ChatPrompt(messages), ctx.attrs, jsonBody).map {
-              case Left(err) => Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(err)))
+              case Left(err) => Left(ChatErrorResults.openai(err))
               case Right(source) => {
                 val finalSource = source.map(_.openaiCompletionEventSource(env)).concat(Source.single("data: [DONE]\n\n".byteString))
                 Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok.chunked(finalSource).as("text/event-stream")), None))
@@ -204,7 +204,7 @@ class OpenAiCompletionProxy extends NgBackendCall {
             }
           } else {
             client.tryCompletion(ChatPrompt(messages), ctx.attrs, jsonBody).map {
-              case Left(err) => Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(err)))
+              case Left(err) => Left(ChatErrorResults.openai(err))
               case Right(response) => Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(response.openaiCompletionJson(client.computeModel(jsonBody).getOrElse("none"), echo, messages.head.content, env))
                 .withHeaders(response.metadata.cacheHeaders.toSeq*)), None))
             }
@@ -273,7 +273,7 @@ object OpenAiResponsesProxy {
 
           if (stream) {
             client.tryResponseStream(ChatPrompt(messages), ctx.attrs, jsonBody).map {
-              case Left(err) => Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(err)))
+              case Left(err) => Left(ChatErrorResults.openai(err))
               case Right(source) => {
                 val responseId = s"resp_${IdGenerator.token(32)}"
                 val modelStr = client.computeModel(jsonBody).getOrElse("none")
@@ -332,7 +332,7 @@ object OpenAiResponsesProxy {
             }
           } else {
             client.tryResponse(ChatPrompt(messages), ctx.attrs, jsonBody).map {
-              case Left(err) => Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(err)))
+              case Left(err) => Left(ChatErrorResults.openai(err))
               case Right(response) => Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(response.openaiResponseJson(client.computeModel(jsonBody).getOrElse("none"), env))
                 .withHeaders(response.metadata.cacheHeaders.toSeq*)), None))
             }

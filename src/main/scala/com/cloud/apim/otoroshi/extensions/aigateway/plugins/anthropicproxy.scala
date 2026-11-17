@@ -376,14 +376,7 @@ object AnthropicCompatProxy {
           val messageId = s"msg_${IdGenerator.token(32)}"
           val model = client.computeModel(finalJsonBody).getOrElse("none")
           client.tryStream(ChatPrompt(messages), ctx.attrs, finalJsonBody).map {
-            case Left(err) =>
-              Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(Json.obj(
-                "type" -> "error",
-                "error" -> Json.obj(
-                  "type" -> "invalid_request_error",
-                  "message" -> err.stringify
-                )
-              ))))
+            case Left(err) => Left(ChatErrorResults.anthropic(err))
             case Right(source) => {
               val writer = new AnthropicStreamWriter()
               val finalSource = Source.single(anthropicMessageStart(model, messageId))
@@ -395,14 +388,7 @@ object AnthropicCompatProxy {
           }
         } else {
           client.call(ChatPrompt(messages), ctx.attrs, finalJsonBody).map {
-            case Left(err) =>
-              Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(Json.obj(
-                "type" -> "error",
-                "error" -> Json.obj(
-                  "type" -> "invalid_request_error",
-                  "message" -> err.stringify
-                )
-              ))))
+            case Left(err) => Left(ChatErrorResults.anthropic(err))
             case Right(response) =>
               Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(response.anthropicJson(client.computeModel(jsonBody).getOrElse("none"), env))
                 .withHeaders(response.metadata.cacheHeaders.toSeq*)), None))

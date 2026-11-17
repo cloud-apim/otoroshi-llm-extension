@@ -2034,6 +2034,44 @@ object DecisionErrors {
 }
 
 /**
+ * The error of a chat call, and the status the caller gets for it (issue #247). What a provider answers with an error
+ * status is kept with that status and its Retry-After, in the envelope of `DecisionErrors.upstream`
+ * (`{status, body, retry_after}`, built by `ProviderHelpers.wrapResponse` / `wrapStreamResponse`), so that a caller
+ * can tell its own mistakes from the failures of the provider.
+ */
+object ChatErrors {
+
+  def upstream(status: Int, body: JsValue, retryAfter: Option[String]): JsValue = DecisionErrors.upstream(status, body, retryAfter)
+
+  // The credentials, the account and the servers of the provider are the ones of the gateway: the caller can not fix
+  // them, it is a 502. A 429 goes back as it is, a client knows how to wait, and the other 4xx are the mistakes of the
+  // request (a prompt larger than the context window, an unknown parameter...), the caller's ones
+  def callerStatus(providerStatus: Int): Int = providerStatus match {
+    case 401 | 402 | 403 | 407 => 502
+    case status if status >= 400 && status < 500 => status
+    case _ => 502
+  }
+
+  final case class Answer(status: Int, body: JsValue, retryAfter: Option[String])
+
+  /**
+   * How a chat error is answered. What the provider answered goes back as it answered it, with `callerStatus`, its
+   * text in the envelope when it is not json. An error of the gateway that tells its status (no target available,
+   * a first token too late) is answered with it, any other one with a 400.
+   */
+  def answer(err: JsValue): Answer = (err.select("status").asOpt[Int], err.select("body").asOpt[JsValue]) match {
+    case (Some(status), Some(body)) =>
+      val shown = body match {
+        case _: JsObject | _: JsArray => body
+        case _ => err
+      }
+      Answer(callerStatus(status), shown, err.select("retry_after").asOptString)
+    case (Some(status), None) if status >= 400 && status < 600 => Answer(status, err, None)
+    case _ => Answer(400, err, None)
+  }
+}
+
+/**
  * The answers of a decision model computed from probabilities, with the formulas TypeSafe documents: the
  * confidence of a choice is how far its best option sits above an even split, the one of a score how tightly
  * the probabilities gather around the most likely level. A noul has no confidence, its probability is the answer.

@@ -266,7 +266,7 @@ class OpenResponseCompatProxy extends NgBackendCall {
             }
 
             client.tryResponseStream(ChatPrompt(messages), ctx.attrs, openAiBody).map {
-              case Left(err) => Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(err)))
+              case Left(err) => Left(ChatErrorResults.openai(err))
               case Right(source) => {
                 val counter = new AtomicInteger(0)
                 val headerEvents = Source(List(
@@ -306,7 +306,7 @@ class OpenResponseCompatProxy extends NgBackendCall {
             }
           } else {
             client.tryResponse(ChatPrompt(messages), ctx.attrs, openAiBody).map {
-              case Left(err) => Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(err)))
+              case Left(err) => Left(ChatErrorResults.openai(err))
               case Right(response) =>
                 val model = client.computeModel(openAiBody).getOrElse("none")
                 val tools = OpenAiResponsesBodyConverter.normalizeResponsesTools(jsonBody.select("tools").asOpt[Seq[JsObject]].getOrElse(Seq.empty))

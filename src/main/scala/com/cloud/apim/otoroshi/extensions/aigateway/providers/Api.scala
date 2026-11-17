@@ -2,13 +2,13 @@ package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
 import org.apache.pekko.stream.scaladsl.Source
 import org.apache.pekko.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway.ChatResponseMetadataUsage
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatErrors, ChatResponseMetadataUsage}
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.CostsOutput
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.libs.json.{JsValue, Json}
+import play.api.libs.json.{JsString, JsValue, Json}
 import play.api.libs.ws.WSResponse
 
 import java.util.concurrent.atomic.{AtomicLong, AtomicReference}
@@ -69,7 +69,8 @@ object ProviderHelpers {
     Try(Json.parse(raw)).getOrElse(Json.obj("status" -> status, "body" -> raw))
   }
 
-  def responseBody(resp: WSResponse): JsValue = {
+  // the body of a provider error: its json, or its text when it is not json (an html page from a load balancer, ...)
+  def errorBody(resp: WSResponse): JsValue = {
     val raw: String = resp.body
     Try {
       if (resp.contentType.contains("application/json")) {
@@ -77,8 +78,11 @@ object ProviderHelpers {
       } else {
         Json.parse(raw)
       }
-    }.getOrElse(Json.obj("status" -> resp.status, "body" -> raw))
+    }.getOrElse(JsString(raw))
   }
+
+  // what a provider answered with an error status, kept with that status and its Retry-After (see `ChatErrors`)
+  def upstreamError(resp: WSResponse, body: JsValue): JsValue = ChatErrors.upstream(resp.status, body, resp.header("Retry-After"))
 
   // reads and logs the body of a streamed provider response with an error status. `resp.body` / `resp.json` cannot
   // be used there: on a response from `.stream()`, play-ws falls back to a blocking read that fails past 13 chunks
@@ -138,7 +142,7 @@ object ProviderHelpers {
       f(resp).right
     } else {
       logBadResponse(from, resp)
-      responseBody(resp).left
+      upstreamError(resp, errorBody(resp)).left
     }
   }
   def wrapStreamResponse[T](from: String, resp: WSResponse, env: Env)(f: WSResponse => T)(using ec: ExecutionContext): Future[Either[JsValue, T]] = {
@@ -155,7 +159,7 @@ object ProviderHelpers {
     if (resp.status == 200) {
       f(resp).rightf
     } else {
-      readErrorBody(from, resp, env).map(raw => Left(errorBodyJson(resp.status, raw)))
+      readErrorBody(from, resp, env).map(raw => Left(upstreamError(resp, Try(Json.parse(raw)).getOrElse(JsString(raw)))))
     }
   }
 }

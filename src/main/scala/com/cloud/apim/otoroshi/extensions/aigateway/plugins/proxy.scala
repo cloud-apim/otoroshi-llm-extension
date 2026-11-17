@@ -99,7 +99,7 @@ class AiLlmProxy extends NgBackendCall {
           }
           if (stream) {
             client.tryStream(ChatPrompt(messages), ctx.attrs, jsonBody).map {
-              case Left(err) => Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(err)))
+              case Left(err) => Left(ChatErrorResults.openai(err))
               case Right(source) => {
                 val finalSource = source.map(_.eventSource(env))
                 Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok.chunked(finalSource).as("text/event-stream")), None))
@@ -107,7 +107,7 @@ class AiLlmProxy extends NgBackendCall {
             }
           } else {
             client.call(ChatPrompt(messages), ctx.attrs, jsonBody).map {
-              case Left(err) => Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(err)))
+              case Left(err) => Left(ChatErrorResults.openai(err))
               case Right(response) => Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(response.json(env)).withHeaders(response.metadata.cacheHeaders.toSeq*)), None))
             }
           }
