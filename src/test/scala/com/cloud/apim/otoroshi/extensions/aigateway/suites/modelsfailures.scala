@@ -104,4 +104,62 @@ class ProviderModelsFailuresSuite extends LlmExtensionOneOtoroshiServerPerSuite 
     providers.deleteEntity(serving).awaitf(10.seconds)
     await(2.seconds)
   }
+
+  // a provider that does not answer fails like one answering an error, a provider whose kind lists no models
+  // (`ChatClient.ModelsListNotSupported`) is not failing
+  test("an unreachable provider fails the listing, a provider with no models listing does not") {
+    val unreachable = openaiProvider("unreachable", freePort)
+    val serving = openaiProvider("serving2", servingPort)
+    val unsupported = AiProvider(
+      id = UUID.randomUUID().toString,
+      name = "unsupported",
+      provider = "cloudflare",
+      connection = Json.obj(
+        "account_id" -> "account",
+        "model_name" -> "@cf/meta/llama-3.1-8b-instruct",
+        "token" -> "token",
+        "timeout" -> 10000
+      ),
+      options = Json.obj("prompt" -> "")
+    )
+    val partialRoute = modelsRoute("models-unreachable-partial.oto.tools", Seq(unreachable.id, serving.id))
+    val unsupportedRoute = modelsRoute("models-unsupported.oto.tools", Seq(unsupported.id))
+    val failingRoute = modelsRoute("models-unreachable-unsupported.oto.tools", Seq(unreachable.id, unsupported.id))
+    val providers = client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "providers")
+    val routes = client.forEntity("proxy.otoroshi.io", "v1", "routes")
+    providers.upsertEntity(unreachable).awaitf(10.seconds)
+    providers.upsertEntity(serving).awaitf(10.seconds)
+    providers.upsertEntity(unsupported).awaitf(10.seconds)
+    routes.upsertEntity(partialRoute).awaitf(10.seconds)
+    routes.upsertEntity(unsupportedRoute).awaitf(10.seconds)
+    routes.upsertEntity(failingRoute).awaitf(10.seconds)
+    await(2.seconds)
+
+    {
+      val r = client.call("GET", s"http://models-unreachable-partial.oto.tools:${port}/models", Map.empty, None).awaitf(30.seconds)
+      assertEquals(r.status, 200)
+      val ids = (r.body: String).parseJson.select("data").as[Seq[JsObject]].map(_.select("id").asString)
+      assertEquals(ids, Seq("serving2/model-a"))
+    }
+
+    {
+      val r = client.call("GET", s"http://models-unsupported.oto.tools:${port}/models", Map.empty, None).awaitf(30.seconds)
+      assertEquals(r.status, 200)
+      assertEquals((r.body: String).parseJson.select("data").as[Seq[JsObject]], Seq.empty)
+    }
+
+    {
+      val r = client.call("GET", s"http://models-unreachable-unsupported.oto.tools:${port}/models", Map.empty, None).awaitf(30.seconds)
+      assertEquals(r.status, 502)
+      assertEquals((r.body: String).parseJson.select("error").select("code").asString, "provider_models_unavailable")
+    }
+
+    routes.deleteEntity(partialRoute).awaitf(10.seconds)
+    routes.deleteEntity(unsupportedRoute).awaitf(10.seconds)
+    routes.deleteEntity(failingRoute).awaitf(10.seconds)
+    providers.deleteEntity(unreachable).awaitf(10.seconds)
+    providers.deleteEntity(serving).awaitf(10.seconds)
+    providers.deleteEntity(unsupported).awaitf(10.seconds)
+    await(2.seconds)
+  }
 }

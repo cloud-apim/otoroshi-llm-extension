@@ -2848,7 +2848,7 @@ trait ChatClient {
 
   def transformOpenAIInputBodyToProviderInputBody(inputBody: JsObject): JsObject = inputBody
 
-  def listModels(raw: Boolean, attrs: TypedMap)(using ec: ExecutionContext): Future[Either[JsValue, List[String]]] = Left(Json.obj("error" -> "models list not supported")).vfuture
+  def listModels(raw: Boolean, attrs: TypedMap)(using ec: ExecutionContext): Future[Either[JsValue, List[String]]] = Left(ChatClient.ModelsListNotSupported).vfuture
 
   /**
    * The input tokens of a chat call, counted by the provider itself (`/v1/messages/count_tokens` of Anthropic, the
@@ -2973,4 +2973,6 @@ trait KindBasedChatClient extends ChatClient {
 
 object ChatClient {
   val ApiUsageKey = TypedKey[ChatResponseMetadata]("otoroshi-extensions.cloud-apim.ai.llm.ApiUsage")
+  /** what `listModels` answers for a provider that has no models listing: the provider is not failing */
+  val ModelsListNotSupported: JsObject = Json.obj("error" -> "models list not supported")
 }

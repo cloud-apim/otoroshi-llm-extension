@@ -2,6 +2,7 @@ package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
 import org.apache.pekko.stream.Materializer
 import org.apache.pekko.stream.scaladsl.{Sink, Source}
+import com.cloud.apim.otoroshi.extensions.aigateway.ChatClient
 import com.cloud.apim.otoroshi.extensions.aigateway.catalog.{ModelEndpoints, ModelsListing, ModelsMetadata}
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{ModelConstraints, ModelTarget, RequiredCosts}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, AiProvidersCatalog, ModelSettings}
@@ -57,7 +58,7 @@ class OpenAiCompatModels extends NgBackendCall {
         case (provider, Some(client)) => (provider, client)
       }
       .mapAsync(1) {
-        case (provider, client) => client.listModels(ctx.request.queryParam("raw").contains("true"), ctx.attrs).map(e => (provider, e))
+        case (provider, client) => ModelsListingFailures.listed(provider, client, ctx)
       }
       .runWith(Sink.seq)
       .map { answers =>
@@ -93,11 +94,20 @@ class OpenAiCompatModels extends NgBackendCall {
  *
  * A provider that cannot list its models (rejected credentials, provider down) used to be dropped from the listing
  * without a word: the caller got a 200 with an empty list, which reads as "this gateway serves no model" rather than
- * "the provider is failing". Each failure is now logged, and a listing for which every provider failed and nothing
- * else is listed answers 502, in the error shape of the OpenAI api. A listing where some providers answered keeps
- * listing their models.
+ * "the provider is failing". Each failure is now logged, and a listing for which no provider listed anything, at
+ * least one of them failing, and nothing else is listed answers 502, in the error shape of the OpenAI api. A listing
+ * where some providers answered keeps listing their models.
+ *
+ * A provider unreachable, or answering something that can not be read, fails like one answering an error. A provider
+ * whose kind has no models listing (`ChatClient.ModelsListNotSupported`) is not failing: it lists nothing, as before.
  */
 object ModelsListingFailures {
+
+  def listed(provider: AiProvider, client: ChatClient, ctx: NgbBackendCallContext)(using ec: ExecutionContext): Future[(AiProvider, Either[JsValue, List[String]])] = {
+    Future.fromTry(Try(client.listModels(ctx.request.queryParam("raw").contains("true"), ctx.attrs))).flatten
+      .recover { case e: Throwable => Left(Json.obj("error" -> e.toString)) }
+      .map(answer => (provider, answer))
+  }
 
   def failure(
     ext: AiExtension,
@@ -105,11 +115,12 @@ object ModelsListingFailures {
     answers: Seq[(AiProvider, Either[JsValue, List[String]])],
     nothingListed: Boolean
   ): Option[NgProxyEngineError] = {
-    val failures = answers.collect { case (provider, Left(error)) => (provider, error) }
+    val failures = answers.collect { case (provider, Left(error)) if error != ChatClient.ModelsListNotSupported => (provider, error) }
     failures.foreach { case (provider, error) =>
       ext.logger.warn(s"models listing on route '${ctx.route.id}': provider '${provider.id}' could not list its models: ${error.stringify}")
     }
-    if (failures.nonEmpty && failures.size == answers.size && nothingListed) {
+    val answered = answers.exists(_._2.isRight)
+    if (failures.nonEmpty && !answered && nothingListed) {
       Some(NgProxyEngineError.NgResultProxyEngineError(Results.BadGateway(Json.obj(
         "error" -> Json.obj(
           "message" -> "the provider could not list its models",
@@ -139,7 +150,7 @@ object OpenAiCompatProvidersWithModels {
         case (provider, Some(client)) => (provider, client)
       }
       .mapAsync(1) {
-        case (provider, client) => client.listModels(ctx.request.queryParam("raw").contains("true"), ctx.attrs).map(e => (provider, e))
+        case (provider, client) => ModelsListingFailures.listed(provider, client, ctx)
       }
       .runWith(Sink.seq)
       .flatMap { answers =>
@@ -405,7 +416,7 @@ class LlmProviderModels extends NgBackendCall {
         case (provider, Some(client)) => (provider, client)
       }
       .mapAsync(1) {
-        case (provider, client) => client.listModels(ctx.request.queryParam("raw").contains("true"), ctx.attrs).map(e => (provider, e))
+        case (provider, client) => ModelsListingFailures.listed(provider, client, ctx)
       }
       .runWith(Sink.seq)
       .map { answers =>
@@ -463,7 +474,7 @@ class LlmProvidersWithModels extends NgBackendCall {
         case (provider, Some(client)) => (provider, client)
       }
       .mapAsync(1) {
-        case (provider, client) => client.listModels(ctx.request.queryParam("raw").contains("true"), ctx.attrs).map(e => (provider, e))
+        case (provider, client) => ModelsListingFailures.listed(provider, client, ctx)
       }
       .runWith(Sink.seq)
       .map { answers =>
