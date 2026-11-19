@@ -107,6 +107,8 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
   private def commonFields(consumedUsing: String, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using env: Env): JsObject = LlmCallTelemetry.json(attrs, originalBody) ++ Json.obj(
     "provider_kind" -> originalProvider.provider.toLowerCase,
     "consumed_using" -> consumedUsing,
+    // the model as the caller named it to this provider: on a router, the routing model or endpoint it was called for
+    "requested_model" -> originalBody.select("model").asOptString.map(JsString.apply).getOrElse(JsNull).asValue,
     "request_id" -> attrs.get(otoroshi.plugins.Keys.SnowFlakeKey).map(JsString.apply).getOrElse(JsNull).asValue,
     "user" -> attrs.get(otoroshi.plugins.Keys.UserKey).map(_.json).getOrElse(JsNull).asValue,
     "apikey" -> attrs.get(otoroshi.plugins.Keys.ApiKeyKey).map(_.json).getOrElse(JsNull).asValue,
