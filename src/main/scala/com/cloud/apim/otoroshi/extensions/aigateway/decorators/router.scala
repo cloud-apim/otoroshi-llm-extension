@@ -75,8 +75,25 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
   override def isAnthropic: Boolean = false
 
   override def listModels(raw: Boolean, attrs: TypedMap)(using ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
-    Right(List("code-router", "auto-router", "smart-router", "intent-router", "fusion-router")).vfuture
+    val named = endpoints.keys.toList.sorted
+    Right(if (named.nonEmpty) named else List("code-router", "auto-router", "smart-router", "intent-router", "fusion-router")).vfuture
   }
+
+  // Named endpoints: `options.endpoints` maps a model name to a router configuration of its own, its `mode` (one
+  // of the router models) and the options of that mode, so one router serves several virtual models, each called
+  // by its name. Without endpoints, `options.mode` fixes the mode; without it, the requested model name does.
+  private def endpoints: Map[String, JsObject] =
+    provider.options.select("endpoints").asOpt[JsObject].map(_.value.collect { case (name, cfg: JsObject) => (name, cfg) }.toMap).getOrElse(Map.empty)
+
+  // the router configured for the endpoint a request names, if it names one
+  private def endpointRouter(originalBody: JsValue): Option[OtoroshiRouterChatClient] =
+    originalBody.select("model").asOptString.flatMap(endpoints.get).map { cfg =>
+      new OtoroshiRouterChatClient(provider.copy(options = (provider.options - "endpoints") ++ cfg ++ Json.obj("mode" -> cfg.select("mode").asOptString.getOrElse("smart-router"))))
+    }
+
+  // the router model a request is served with: the configured mode first, the requested model name otherwise
+  private def routerModelOf(originalBody: JsValue): String =
+    provider.options.select("mode").asOptString.orElse(originalBody.select("model").asOptString).getOrElse("code-router").toLowerCase
 
   private def candidateModel(p: AiProvider): String =
     p.options.select("model").asOptString.getOrElse("--")
@@ -95,16 +112,24 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
   // several times with different models, each one scored and priced on its own model
   private def resolveCandidates(refsKey: String, refKey: String)(using env: Env): Seq[RouterCandidate] = {
     val ext = env.adminExtensions.extension[AiExtension].get
-    val refs: Seq[(String, Option[String])] = provider.options.select(refsKey).asOpt[Seq[JsValue]].getOrElse(Seq.empty).flatMap {
-      case JsString(id) => Some((id, None))
-      case obj: JsObject => obj.select("ref").asOptString.orElse(obj.select(refKey).asOptString).map(id => (id, obj.select("model").asOptString))
+    // an entry may also carry its own `score` (0 to 1) and `cost` (per token, any unit shared by all candidates),
+    // for models the coding index or the price catalog do not know, or that whoever configures the router ranks
+    // differently
+    val refs: Seq[(String, Option[String], JsObject)] = provider.options.select(refsKey).asOpt[Seq[JsValue]].getOrElse(Seq.empty).flatMap {
+      case JsString(id) => Some((id, None, Json.obj()))
+      case obj: JsObject => obj.select("ref").asOptString.orElse(obj.select(refKey).asOptString).map(id => (id, obj.select("model").asOptString, obj))
       case _ => None
     }
-    refs.flatMap { case (r, model) => ext.states.provider(r).map(_.withModel(model)) }
-      .filterNot(_.id == provider.id) // avoid routing to ourselves (infinite loop)
-      .map { p =>
+    refs.flatMap { case (r, model, entry) => ext.states.provider(r).map(p => (p.withModel(model), entry)) }
+      .filterNot(_._1.id == provider.id) // avoid routing to ourselves (infinite loop)
+      .map { case (p, entry) =>
         val model = candidateModel(p)
-        RouterCandidate(p, model, OtoroshiRouterChatClient.codingScoreFor(model), candidateCost(p, model))
+        RouterCandidate(
+          p,
+          model,
+          entry.select("score").asOpt[Double].orElse(OtoroshiRouterChatClient.codingScoreFor(model)),
+          entry.select("cost").asOpt[BigDecimal].orElse(candidateCost(p, model)),
+        )
       }
   }
 
@@ -455,10 +480,10 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
   }
 
   private def isFusion(originalBody: JsValue): Boolean =
-    originalBody.select("model").asOptString.exists(_.toLowerCase.contains("fusion"))
+    routerModelOf(originalBody).contains("fusion")
 
   private def execute[T](prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(f: (ChatClient, JsValue) => Future[Either[JsValue, T]])(using ec: ExecutionContext, env: Env): Future[Either[JsValue, T]] = {
-    val requestedModel = originalBody.select("model").asOptString.getOrElse("code-router").toLowerCase
+    val requestedModel = routerModelOf(originalBody)
     val (routerModel, refsField) =
       if (requestedModel.contains("auto")) ("auto-router", "auto_router_refs")
       else if (requestedModel.contains("smart")) ("smart-router", "smart_router_refs")
@@ -495,13 +520,25 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
     }
   }
 
+  // a router with named endpoints serves those names only
+  private def unknownEndpoint(originalBody: JsValue): JsValue =
+    Json.obj("error" -> s"no endpoint '${originalBody.select("model").asOptString.getOrElse("")}' on this router (options.endpoints)")
+
   override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    if (isFusion(originalBody)) fusionCall(prompt, attrs, originalBody)
-    else execute(prompt, attrs, originalBody)((client, body) => client.invoke(kind, prompt, attrs, body))
+    endpointRouter(originalBody) match {
+      case Some(router) => router.invoke(kind, prompt, attrs, originalBody)
+      case None if endpoints.nonEmpty => unknownEndpoint(originalBody).leftf
+      case None if isFusion(originalBody) => fusionCall(prompt, attrs, originalBody)
+      case None => execute(prompt, attrs, originalBody)((client, body) => client.invoke(kind, prompt, attrs, body))
+    }
   }
 
   override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
-    if (isFusion(originalBody)) fusionStream(prompt, attrs, originalBody)
-    else execute(prompt, attrs, originalBody)((client, body) => client.invokeStream(kind, prompt, attrs, body))
+    endpointRouter(originalBody) match {
+      case Some(router) => router.invokeStream(kind, prompt, attrs, originalBody)
+      case None if endpoints.nonEmpty => unknownEndpoint(originalBody).leftf
+      case None if isFusion(originalBody) => fusionStream(prompt, attrs, originalBody)
+      case None => execute(prompt, attrs, originalBody)((client, body) => client.invokeStream(kind, prompt, attrs, body))
+    }
   }
 }

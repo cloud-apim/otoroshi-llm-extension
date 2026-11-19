@@ -241,6 +241,44 @@ A fusion request costs the sum of its calls: every panel member, the judge and t
 [budget](/docs/cost-optimizations/budgets) on the route or on the API keys allowed to use it.
 :::
 
+## Named endpoints
+
+A router can serve several virtual models, each with its own routing model and candidates. `options.endpoints`
+maps a model name to the options of one routing model, with its `mode`:
+
+```json
+{
+  "provider": "otoroshi",
+  "options": {
+    "decision_model_ref": "decision-model_xxx",
+    "endpoints": {
+      "assistant": {
+        "mode": "smart-router",
+        "smart_router_refs": [
+          { "ref": "provider_local", "model": "small-model", "score": 0.5, "cost": 1 },
+          { "ref": "provider_local", "model": "large-model", "score": 1, "cost": 3 }
+        ]
+      },
+      "support": {
+        "mode": "intent-router",
+        "intent_router_refs": [
+          { "ref": "provider_local", "model": "small-model", "description": "Greetings and short questions" },
+          { "ref": "provider_code", "model": "coder", "description": "Programming and code review" }
+        ]
+      }
+    }
+  }
+}
+```
+
+A caller sends `assistant` or `support` as the model, with the router's prefix when the route has several
+providers (`<router>/assistant`). The router lists these names in `/v1/models`, and refuses any other name. The
+options of an endpoint are read over the router's own ones: here both endpoints use the router's decision model.
+An API key restricted to `<router>/assistant` may call that endpoint and its candidates, and nothing else.
+
+A router without endpoints can fix its routing model with `options.mode` instead of reading it from the requested
+model name.
+
 ## Configuration reference
 
 | Option | Routing model | Default | Description |
@@ -265,10 +303,16 @@ A fusion request costs the sum of its calls: every panel member, the judge and t
 | `fusion_router_judge_model` | fusion-router | default model of the judge | Model of the judge provider |
 | `fusion_router_synthesizer_ref` | fusion-router | best panel member | Provider id of the model writing the final answer |
 | `fusion_router_synthesizer_model` | fusion-router | default model of the synthesizer | Model of the synthesizer provider |
+| `mode` | all | the requested model name | The routing model of the router, whatever model name it is called with |
+| `endpoints` | all | none | Named endpoints: a model name mapped to `mode` and the options of that routing model |
 
 Candidate lists accept provider ids (`["provider_1"]`) or objects (`[{ "ref": "provider_1", "model": "gpt-4o-mini" }]`).
 A candidate uses the model given with it, or the default model of its provider: one provider can be a candidate
 several times with different models, each one scored and priced on its own model. A router never routes to itself.
+
+A candidate object may also carry its own `score` (from `0` to `1`) and `cost` (per token, in any unit shared by
+the candidates of the list). They replace the coding quality index and the price catalog for that candidate, for
+models the gateway does not know, such as self-hosted ones, or that you rank differently.
 
 ### Per-request parameters
 

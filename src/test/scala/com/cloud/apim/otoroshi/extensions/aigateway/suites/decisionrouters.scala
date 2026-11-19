@@ -96,6 +96,7 @@ class DecisionRoutersSuite extends LlmExtensionOneOtoroshiServerPerSuite {
   val unrated = new Chats("decision-routers-unrated")
   val picked = new Chats("decision-routers-picked")
   val cascading = new Chats("decision-routers-cascading")
+  val named = new Chats("decision-routers-named")
 
   def ext: AiExtension = otoroshi.env.adminExtensions.extension[AiExtension].get
 
@@ -149,6 +150,26 @@ class DecisionRoutersSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     ),
   ))
 
+  // One router, two virtual models called by their names. The candidates of `fast` are models nobody scored or
+  // priced: their own `score` and `cost` rank them, and `small` is cheaper than `large` although listed after it
+  lazy val endpoints = router("endpoints", Json.obj(
+    "decision_model_ref" -> rating.model.id,
+    "endpoints" -> Json.obj(
+      "fast" -> Json.obj("mode" -> "smart-router", "smart_router_refs" -> Json.arr(
+        Json.obj("ref" -> named.provider.id, "model" -> "large", "score" -> 1.0, "cost" -> 3),
+        Json.obj("ref" -> named.provider.id, "model" -> "small", "score" -> 0.2, "cost" -> 1),
+      )),
+      "helper" -> Json.obj("mode" -> "intent-router", "decision_model_ref" -> picking.model.id, "intent_router_refs" -> described(named)),
+    ),
+  ))
+  // a router whose mode is set, whatever the model name it is called with
+  lazy val moded = router("moded", Json.obj(
+    "mode" -> "smart-router", "decision_model_ref" -> rating.model.id, "smart_router_refs" -> Json.arr(
+      Json.obj("ref" -> named.provider.id, "model" -> "large", "score" -> 1.0, "cost" -> 3),
+      Json.obj("ref" -> named.provider.id, "model" -> "small", "score" -> 0.2, "cost" -> 1),
+    ),
+  ))
+
   // what an api key may spend, whatever serves it
   val caller = ApiKey(clientId = "key-of-decision-routers", clientSecret = "secret", clientName = "caller", authorizedEntities = Seq.empty)
   val budget = Json.obj(
@@ -160,7 +181,7 @@ class DecisionRoutersSuite extends LlmExtensionOneOtoroshiServerPerSuite {
 
   lazy val setup: Unit = {
     Seq(rating, picking).foreach(d => assert(client.forLlmEntity("decision-models").upsertEntity(d.model).awaitf(10.seconds).createdOrUpdated, s"${d.model.name} should be saved"))
-    (Seq(rated, unrated, picked, cascading).map(_.provider) ++ Seq(smart, blind, demanding, intent, failing)).foreach { p =>
+    (Seq(rated, unrated, picked, cascading, named).map(_.provider) ++ Seq(smart, blind, demanding, intent, failing, endpoints, moded)).foreach { p =>
       assert(client.forLlmEntity("providers").upsertEntity(p).awaitf(10.seconds).createdOrUpdated, s"${p.name} should be saved")
     }
     client.forLlmEntity("ai-budgets").createRaw(budget).awaitf(10.seconds)
@@ -238,5 +259,26 @@ class DecisionRoutersSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     ask(failing, "intent-router", "I need a translation of this letter")
     assertEquals(cascading.asked, Seq("down", "coder"))
     assertEquals(picking.asked.last.select("model").asOptString, Some("jev-test"), "a router naming no model leaves the decision model with its own")
+  }
+
+  test("named endpoints: one router serves several virtual models by their names, and lists them") {
+    setup
+    given env: Env = otoroshi.env
+    val models = ext.states.provider(endpoints.id).flatMap(_.getChatClient()).get.listModels(false, TypedMap.empty)(using ec).awaitf(10.seconds)
+    assertEquals(models, Right(List("fast", "helper")))
+    ask(endpoints, "fast", "hello !")
+    ask(endpoints, "fast", "research the proof of this theorem")
+    ask(endpoints, "helper", "which database queries are slow ?")
+    assertEquals(named.asked, Seq("small", "large", "coder"), "the scores and costs of the candidates rank them, and each endpoint has its own mode")
+  }
+
+  test("named endpoints: a name the router does not serve is refused, and a router with a mode ignores the model name") {
+    setup
+    given env: Env = otoroshi.env
+    val refused = ext.states.provider(endpoints.id).flatMap(_.getChatClient()).get
+      .call(ChatPrompt(Seq(ChatMessage.userStrInput("hello !"))), TypedMap.empty, Json.obj("model" -> "elsewhere"))(using ec, env).awaitf(30.seconds)
+    assert(refused.isLeft, s"an unknown endpoint should be refused, got ${refused}")
+    ask(moded, "anything", "hello !")
+    assertEquals(named.asked.last, "small")
   }
 }
