@@ -50,6 +50,7 @@ object ChildCall {
     outer.get(otoroshi.next.plugins.Keys.RouteKey).foreach(v => child.put(otoroshi.next.plugins.Keys.RouteKey -> v))
     outer.get(otoroshi.plugins.Keys.RequestKey).foreach(v => child.put(otoroshi.plugins.Keys.RequestKey -> v))
     outer.get(otoroshi.plugins.Keys.SnowFlakeKey).foreach(v => child.put(otoroshi.plugins.Keys.SnowFlakeKey -> v))
+    ModelConstraints.inherit(outer, child)
     child
   }
 }

@@ -239,4 +239,16 @@ class DecisionRoutersSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assertEquals(cascading.asked, Seq("down", "coder"))
     assertEquals(picking.asked.last.select("model").asOptString, Some("jev-test"), "a router naming no model leaves the decision model with its own")
   }
+
+  test("smart-router: a key allowed the router only gets its decision and its candidates") {
+    setup
+    val restricted = ApiKey(
+      clientId = "key-of-the-router", clientSecret = "secret", clientName = "router only", authorizedEntities = Seq.empty,
+      metadata = Map("ai_models_include" -> "smart/smart-router"),
+    )
+    val before = rating.asked.size
+    ask(smart, "smart-router", "research the proof of this theorem", TypedMap.empty.put(_root_.otoroshi.plugins.Keys.ApiKeyKey -> restricted))
+    assertEquals(rating.asked.size, before + 1, "the decision model is asked on behalf of the key")
+    assertEquals(rated.asked.last, best, "and its rating is followed")
+  }
 }
