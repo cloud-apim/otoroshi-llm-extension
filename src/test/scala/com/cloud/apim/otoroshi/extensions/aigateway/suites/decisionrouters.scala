@@ -9,7 +9,8 @@ import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json.*
-import reactor.core.publisher.Mono
+import org.apache.pekko.stream.scaladsl.Sink
+import reactor.core.publisher.{Flux, Mono}
 import reactor.netty.http.server.HttpServerResponse
 
 import java.util.UUID
@@ -67,14 +68,26 @@ class DecisionRoutersSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     def asked: Seq[JsValue] = received.asScala.toSeq
   }
 
-  // A provider serving any model it is asked for, and saying which ones it was asked. A model named `down` fails
+  // A provider serving any model it is asked for, blocking or streaming, and saying which ones it was asked. A
+  // model named `down` fails
   class Chats(name: String) {
     val models = new ConcurrentLinkedQueue[String]()
     val (port, _) = createTestServerWithRoutes(name, routes => routes
       .post("/v1/chat/completions", (req, response) => req.receive().aggregate().asString().flatMap { raw =>
         val model = Json.parse(raw).select("model").asString
         models.add(model)
+        def chunk(delta: JsObject, finish: JsValue) = "data: " + Json.obj(
+          "id" -> "chatcmpl-1", "object" -> "chat.completion.chunk", "created" -> 1700000000, "model" -> model,
+          "choices" -> Json.arr(Json.obj("index" -> 0, "delta" -> delta, "finish_reason" -> finish)),
+        ).stringify + "\n\n"
         if (model == "down") send(response, 500, Json.obj("error" -> Json.obj("message" -> "down")))
+        else if (Json.parse(raw).select("stream").asOpt[Boolean].contains(true)) {
+          response.status(200).addHeader("Content-Type", "text/event-stream").sendString(Flux.just(
+            chunk(Json.obj("role" -> "assistant", "content" -> "hello"), JsNull),
+            chunk(Json.obj(), JsString("stop")),
+            "data: [DONE]\n\n",
+          )).`then`()
+        }
         else send(response, 200, Json.obj(
           "id" -> "chatcmpl-1", "object" -> "chat.completion", "created" -> 1700000000, "model" -> model,
           "choices" -> Json.arr(Json.obj("index" -> 0, "finish_reason" -> "stop", "message" -> Json.obj("role" -> "assistant", "content" -> "hello"))),
@@ -96,6 +109,7 @@ class DecisionRoutersSuite extends LlmExtensionOneOtoroshiServerPerSuite {
   val unrated = new Chats("decision-routers-unrated")
   val picked = new Chats("decision-routers-picked")
   val cascading = new Chats("decision-routers-cascading")
+  val streamed = new Chats("decision-routers-streamed")
 
   def ext: AiExtension = otoroshi.env.adminExtensions.extension[AiExtension].get
 
@@ -149,6 +163,8 @@ class DecisionRoutersSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     ),
   ))
 
+  lazy val streaming = router("streaming", Json.obj("code_router_refs" -> candidates(streamed, "small")))
+
   // what an api key may spend, whatever serves it
   val caller = ApiKey(clientId = "key-of-decision-routers", clientSecret = "secret", clientName = "caller", authorizedEntities = Seq.empty)
   val budget = Json.obj(
@@ -160,7 +176,7 @@ class DecisionRoutersSuite extends LlmExtensionOneOtoroshiServerPerSuite {
 
   lazy val setup: Unit = {
     Seq(rating, picking).foreach(d => assert(client.forLlmEntity("decision-models").upsertEntity(d.model).awaitf(10.seconds).createdOrUpdated, s"${d.model.name} should be saved"))
-    (Seq(rated, unrated, picked, cascading).map(_.provider) ++ Seq(smart, blind, demanding, intent, failing)).foreach { p =>
+    (Seq(rated, unrated, picked, cascading, streamed).map(_.provider) ++ Seq(smart, blind, demanding, intent, failing, streaming)).foreach { p =>
       assert(client.forLlmEntity("providers").upsertEntity(p).awaitf(10.seconds).createdOrUpdated, s"${p.name} should be saved")
     }
     client.forLlmEntity("ai-budgets").createRaw(budget).awaitf(10.seconds)
@@ -238,5 +254,17 @@ class DecisionRoutersSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     ask(failing, "intent-router", "I need a translation of this letter")
     assertEquals(cascading.asked, Seq("down", "coder"))
     assertEquals(picking.asked.last.select("model").asOptString, Some("jev-test"), "a router naming no model leaves the decision model with its own")
+  }
+
+  test("a streamed request is streamed by the candidate that answers it") {
+    setup
+    given env: Env = otoroshi.env
+    val resp = ext.states.provider(streaming.id).flatMap(_.getChatClient()).get
+      .tryStream(ChatPrompt(Seq(ChatMessage.userStrInput("hello !"))), TypedMap.empty, Json.obj("model" -> "code-router", "stream" -> true))(using ec, env)
+      .awaitf(30.seconds)
+    assert(resp.isRight, s"the router should stream, got ${resp}")
+    val chunks = resp.toOption.get.runWith(Sink.seq)(using mat).awaitf(30.seconds)
+    assert(chunks.nonEmpty, "the candidate's chunks should come through")
+    assertEquals(streamed.asked, Seq("small"))
   }
 }
