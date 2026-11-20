@@ -47,6 +47,10 @@ object ModelConstraints {
 
   private def delegationOf(target: ModelTarget, model: Option[String]): String = s"${target.id}\u0000${model.getOrElse("")}"
 
+  // a child call made on behalf of the outer one is allowed what the outer one was handed
+  def inherit(outer: TypedMap, child: TypedMap): Unit =
+    outer.get(DelegatedKey).foreach(set => child.put(DelegatedKey -> set))
+
   private def delegated(attrs: TypedMap, target: ModelTarget, model: Option[String]): Boolean =
     attrs.get(DelegatedKey).exists(_.contains(delegationOf(target, model)))
 

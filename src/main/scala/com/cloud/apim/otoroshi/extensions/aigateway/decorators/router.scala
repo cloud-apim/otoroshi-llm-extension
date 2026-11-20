@@ -2,7 +2,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
 import org.apache.pekko.stream.scaladsl.Source
 import com.cloud.apim.otoroshi.extensions.aigateway.catalog.CodingIndex
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, DecisionModel}
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatCallKind, ChatClient, ChatMessage, ChatPrompt, ChatResponse, ChatResponseChunk, DecisionModelClient, DecisionModelClientInputOptions, DecisionRequests, KindBasedChatClient}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
@@ -254,11 +254,11 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
   ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
   // the decision model of the router (`decision_model_ref`), serving `decision_model_model` or its own model
-  private def decisionClient()(using env: Env): Option[DecisionModelClient] = {
+  private def decisionModel()(using env: Env): Option[DecisionModel] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     provider.options.select("decision_model_ref").asOptString.map(_.trim).filter(_.nonEmpty)
       .flatMap(ref => ext.states.decisionModel(ref))
-      .flatMap(_.withModel(provider.options.select("decision_model_model").asOptString).getDecisionModelClient())
+      .map(_.withModel(provider.options.select("decision_model_model").asOptString))
   }
 
   // What the decision model reads of the request: the end of the conversation, which is where the request is.
@@ -272,11 +272,13 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
 
   // The answer of the decision model to one question about the request, none when it could not be asked: the
   // routers then follow their fallback order. A call of its own, counted for the caller
-  private def ask(prompt: ChatPrompt, attrs: TypedMap, name: String, question: JsObject)(using ec: ExecutionContext, env: Env): Future[Option[JsObject]] = {
-    decisionClient() match {
+  // The decision model is part of the router: a consumer allowed to call the router is allowed its decision
+  private def ask(prompt: ChatPrompt, attrs: TypedMap, requested: Option[String], name: String, question: JsObject)(using ec: ExecutionContext, env: Env): Future[Option[JsObject]] = {
+    decisionModel().flatMap(dm => dm.getDecisionModelClient().map(client => (dm, client))) match {
       case None => Future.successful(None)
-      case Some(client) =>
+      case Some((dm, client)) =>
         val opts = DecisionModelClientInputOptions(stateOf(prompt), Json.obj(name -> question))
+        ModelConstraints.delegate(attrs, ModelTarget.of(provider), requested, dm.target, opts.model)
         client.decide(opts, opts.json.asObject, ChildCall.attrs(attrs)).map {
           case Right(res) => res.answers.select(name).asOpt[JsObject]
           case Left(_) => None
@@ -288,14 +290,14 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
 
   // smart-router: the more demanding the request, the higher the quality floor, from `smart_router_min_score` for
   // a trivial request to `smart_router_max_score` for the most demanding one. The rest is the code-router
-  private def smartOrderedCandidates(prompt: ChatPrompt, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Seq[AiProvider]] = {
+  private def smartOrderedCandidates(prompt: ChatPrompt, attrs: TypedMap, requested: Option[String])(using ec: ExecutionContext, env: Env): Future[Seq[AiProvider]] = {
     import OtoroshiRouterChatClient.*
     val resolved = resolveCandidates("smart_router_refs", "smart_router_ref")
     if (resolved.size < 2) {
       Future.successful(resolved.map(_.provider))
     } else {
       val question = Json.obj("type" -> DecisionRequests.Score, "instructions" -> difficultyInstructions, "criteria" -> difficultyLevels)
-      ask(prompt, attrs, difficultyQuestion, question).map { answer =>
+      ask(prompt, attrs, requested, difficultyQuestion, question).map { answer =>
         val difficulty = answer.flatMap(difficultyOf).getOrElse(defaultDifficulty)
         val low = bounded(provider.options.select("smart_router_min_score").asOpt[Double], 0.0)
         val high = math.max(low, bounded(provider.options.select("smart_router_max_score").asOpt[Double], 1.0))
@@ -327,7 +329,7 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
   // intent-router: the candidate the decision model picks, then the other ones from the most to the least probable.
   // Without an answer, or with one the model is not sure enough of (`intent_router_min_confidence`), the candidates
   // answer in the order they were given: the first one is the default
-  private def intentOrderedCandidates(prompt: ChatPrompt, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Seq[AiProvider]] = {
+  private def intentOrderedCandidates(prompt: ChatPrompt, attrs: TypedMap, requested: Option[String])(using ec: ExecutionContext, env: Env): Future[Seq[AiProvider]] = {
     import OtoroshiRouterChatClient.*
     val candidates = intentCandidates()
     if (candidates.size < 2) {
@@ -339,7 +341,7 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
         "instructions" -> instructions,
         "criteria" -> JsObject(candidates.map(c => c.name -> JsString(c.description))),
       )
-      ask(prompt, attrs, intentQuestion, question).map { answer =>
+      ask(prompt, attrs, requested, intentQuestion, question).map { answer =>
         val confident = answer.exists { a =>
           provider.options.select("intent_router_min_confidence").asOpt[Double].forall(min => a.select("confidence").asOpt[Double].exists(_ >= min))
         }
@@ -471,8 +473,8 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
       else ("code-router", "code_router_refs")
     val orderedF: Future[Seq[AiProvider]] = routerModel match {
       case "auto-router" => autoOrderedCandidates(prompt, attrs, originalBody)
-      case "smart-router" => smartOrderedCandidates(prompt, attrs)
-      case "intent-router" => intentOrderedCandidates(prompt, attrs)
+      case "smart-router" => smartOrderedCandidates(prompt, attrs, originalBody.select("model").asOptString)
+      case "intent-router" => intentOrderedCandidates(prompt, attrs, originalBody.select("model").asOptString)
       case _ => Future.successful(codeOrderedCandidates(originalBody))
     }
     orderedF.flatMap { ordered =>
