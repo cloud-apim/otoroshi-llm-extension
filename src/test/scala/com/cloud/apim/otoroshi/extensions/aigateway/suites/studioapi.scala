@@ -305,6 +305,49 @@ class StudioApiSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assertEquals(kept.select("auto_router_refs").as[Seq[JsValue]], Seq(Json.obj("ref" -> openaiText, "model" -> "gpt-4o-mini"), play.api.libs.json.JsString(ollamaText)))
     assertEquals(kept.select("auto_router_classifier_model").asString, "gpt-4o-mini")
     assertEquals(router.select("cost_quality_tradeoff").as[BigDecimal], BigDecimal(10))
+    // a candidate ranked on a score and a cost of its own keeps them when it is given again as an id
+    val routerId = router.select("id").asString
+    val ranked = Json.obj("ref" -> openaiText, "model" -> "gpt-4o-mini", "score" -> 42, "cost" -> 2)
+    expect(studio("PUT", s"/workspaces/$wsId/routers/$routerId", Json.obj("auto_router_refs" -> Json.arr(ranked, ollamaText))), 200)
+    val rankedKept = expect(studio("PUT", s"/workspaces/$wsId/routers/$routerId", Json.obj("auto_router_refs" -> Json.arr(openaiText, ollamaText))), 200)
+    assertEquals(rankedKept.select("auto_router_refs").as[Seq[JsValue]].head, ranked)
+    assertEquals(aiEntity("providers", routerId).get.at("options.auto_router_refs").as[Seq[JsValue]].head, ranked)
+    // a router set to one routing model answers any model it is asked for
+    expect(studio("PUT", s"/workspaces/$wsId/routers/$routerId", Json.obj("mode" -> "nope")), 400)
+    expect(studio("PUT", s"/workspaces/$wsId/routers/$routerId", Json.obj("mode" -> "smart")), 400)
+    val moded = expect(studio("PUT", s"/workspaces/$wsId/routers/$routerId", Json.obj("mode" -> "auto-router")), 200)
+    assertEquals(moded.select("mode").asOptString, Some("auto"))
+    assertEquals(aiEntity("providers", routerId).get.at("options.mode").asOptString, Some("auto-router"))
+    // named endpoints: each one a routing model, its own options over the ones of the router
+    expect(studio("PUT", s"/workspaces/$wsId/routers/$routerId", Json.obj("endpoints" -> Json.arr(Json.obj("name" -> "a/b", "mode" -> "code")))), 400)
+    expect(studio("PUT", s"/workspaces/$wsId/routers/$routerId", Json.obj("endpoints" -> Json.arr(Json.obj("name" -> "helper")))), 400)
+    expect(studio("PUT", s"/workspaces/$wsId/routers/$routerId", Json.obj("endpoints" -> Json.arr(Json.obj("name" -> "helper", "mode" -> "intent")))), 400)
+    expect(studio("PUT", s"/workspaces/$wsId/routers/$routerId", Json.obj("endpoints" -> Json.arr(Json.obj("name" -> "helper", "mode" -> "code", "code_router_refs" -> Json.arr("provider_of_another_workspace"))))), 400)
+    expect(studio("PUT", s"/workspaces/$wsId/routers/$routerId", Json.obj("endpoints" -> Json.arr(Json.obj("name" -> "helper", "mode" -> "auto"), Json.obj("name" -> "helper", "mode" -> "auto")))), 400)
+    val named = expect(studio("PUT", s"/workspaces/$wsId/routers/$routerId", Json.obj("endpoints" -> Json.arr(
+      Json.obj("name" -> "support", "mode" -> "auto-router"),
+      Json.obj("name" -> "assistant", "mode" -> "code", "code_router_refs" -> Json.arr(Json.obj("ref" -> ollamaText, "score" -> 10, "cost" -> 1)), "min_coding_score" -> 3),
+    ))), 200)
+    assertEquals(named.select("endpoints").as[Seq[JsObject]].map(e => (e.select("name").asString, e.select("mode").asString)), Seq("assistant" -> "code", "support" -> "auto"))
+    val storedEndpoints = aiEntity("providers", routerId).get.at("options.endpoints").as[JsObject]
+    assertEquals(storedEndpoints.select("assistant").as[JsObject], Json.obj("mode" -> "code-router", "code_router_refs" -> Json.arr(Json.obj("ref" -> ollamaText, "score" -> 10, "cost" -> 1)), "min_coding_score" -> 1))
+    assertEquals(storedEndpoints.select("support").as[JsObject], Json.obj("mode" -> "auto-router"), "an endpoint giving no candidates routes on the ones of the router")
+    // the models of the workspace are the named ones of the router
+    val listedModels = expect(studio("GET", s"/workspaces/$wsId/models?force=true"), 200).select("models").as[Seq[JsObject]].map(_.select("id").asString)
+    assert(Seq("assistant", "support").forall(m => listedModels.exists(_.endsWith(s"/$m"))), s"the named models of the router should be listed, got $listedModels")
+    assert(!listedModels.exists(_.endsWith("-router")), s"a router with named models answers their names only, got $listedModels")
+    // what an endpoint is not given it keeps, an empty value gives it the option of the router back
+    val keptEndpoints = expect(studio("PUT", s"/workspaces/$wsId/routers/$routerId", Json.obj("endpoints" -> Json.arr(
+      Json.obj("name" -> "assistant", "min_coding_score" -> JsNull), Json.obj("name" -> "support", "cost_quality_tradeoff" -> 2),
+    ))), 200)
+    assertEquals(keptEndpoints.select("endpoints").as[Seq[JsObject]], Seq(
+      Json.obj("name" -> "assistant", "mode" -> "code", "code_router_refs" -> Json.arr(Json.obj("ref" -> ollamaText, "score" -> 10, "cost" -> 1))),
+      Json.obj("name" -> "support", "mode" -> "auto", "cost_quality_tradeoff" -> 2),
+    ))
+    assertEquals(keptEndpoints.select("auto_router_refs").as[Seq[JsValue]].head, ranked, "the router keeps its own options")
+    val cleared = expect(studio("PUT", s"/workspaces/$wsId/routers/$routerId", Json.obj("endpoints" -> JsNull, "mode" -> JsNull)), 200)
+    assertEquals((cleared.select("endpoints").as[Seq[JsObject]], cleared.select("mode").asOptString), (Seq.empty, None))
+    assertEquals(aiEntity("providers", routerId).get.at("options.endpoints").asOpt[JsValue], Some(JsNull))
     expect(studio("POST", s"/workspaces/$wsId/routers", Json.obj("name" -> "empty")), 400)
     assertEquals(compat(wsId).select("language_model_refs").as[Seq[String]], Seq(ollamaText, openaiText, balancer.select("id").asString, router.select("id").asString))
     val routing = expect(studio("PUT", s"/workspaces/$wsId/routing", Json.obj("default_provider" -> openaiText, "fallbacks" -> Json.obj(openaiText -> ollamaText))), 200)

@@ -1741,14 +1741,91 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     case _ => None
   }.filter(_.nonEmpty)
 
-  // router candidates as stored: a provider id, or { ref, model } when the candidate uses another model than the
-  // default model of its provider
+  // router candidates as stored: a provider id, or { ref, model, score, cost } when the candidate uses another model
+  // than the default model of its provider, or is ranked on a score and a cost of its own
   private def candidateEntries(value: JsLookupResult): Seq[JsValue] = value.asOpt[Seq[JsValue]].getOrElse(Seq.empty).flatMap {
     case JsString(s) if s.nonEmpty => Some(JsString(s))
     case o: JsObject => o.select("ref").asOptString.filter(_.nonEmpty).map { ref =>
-      o.select("model").asOptString.map(_.trim).filter(_.nonEmpty).map(m => Json.obj("ref" -> ref, "model" -> m)).getOrElse(JsString(ref))
+      val own = JsObject(
+        o.select("model").asOptString.map(_.trim).filter(_.nonEmpty).map(m => "model" -> JsString(m)).toSeq ++
+          Seq("score", "cost").flatMap(k => o.select(k).asOpt[BigDecimal].filter(_ >= 0).map(v => k -> JsNumber(v)))
+      )
+      if (own.value.isEmpty) JsString(ref) else Json.obj("ref" -> ref) ++ own
     }
     case _ => None
+  }
+
+  // candidates given as ids keep the entry already stored for them (their model, score and cost), objects set it
+  private def candidatesGiven(key: String, values: Seq[JsValue], previous: Seq[JsValue]): Seq[JsValue] = values.map {
+    case JsString(id) => previous.find(e => e.isInstanceOf[JsObject] && entryRef(e) == id).getOrElse(JsString(id))
+    case o: JsObject => candidateEntries(JsDefined(Json.arr(o))).headOption.getOrElse(throw badRequest(s"'$key' entries need a 'ref'"))
+    case _ => throw badRequest(s"'$key' must be an array of provider ids or { ref, model } objects")
+  }
+
+  // the routing model a router or one of its endpoints is set to (`options.mode`), by its id. The router reads the
+  // id in the value, as it reads it in a model name
+  private def modeIdOf(value: JsLookupResult): Option[String] =
+    nonEmptyString(value).map(_.toLowerCase).flatMap(m => routerModes.find(r => m.contains(r.id)).map(_.id))
+
+  // a routing model a form names, by its id or its model name, as the router stores it
+  private def modeGiven(value: String): String = {
+    val m = value.trim.toLowerCase
+    routerModes.find(r => m == r.id || m == s"${r.id}-router").map(r => s"${r.id}-router").getOrElse(throw badRequest(s"'$value' is not a routing model (code, auto, smart, intent or fusion)"))
+  }
+
+  private def refsKeyOf(modeId: String): String = routerModes.find(_.id == modeId).map(_.refs).getOrElse("smart_router_refs")
+
+  // the options an endpoint can set over the ones of its router
+  private val endpointLists = Seq("code_router_refs", "auto_router_refs", "smart_router_refs", "fusion_router_refs")
+  private val endpointRefs = Seq("decision_model_ref", "auto_router_classifier_ref", "fusion_router_judge_ref", "fusion_router_synthesizer_ref")
+  private val endpointTexts = Seq("decision_model_model", "auto_router_classifier_model", "fusion_router_judge_model", "fusion_router_synthesizer_model", "intent_router_instructions")
+  private val endpointNumbers = Seq(("min_coding_score", 0, 1), ("cost_quality_tradeoff", 0, 10), ("smart_router_min_score", 0, 1), ("smart_router_max_score", 0, 1), ("intent_router_min_confidence", 0, 1))
+
+  // what an endpoint sets of its own: the options it carries, the others being the ones of its router
+  private def endpointFields(cfg: JsObject): JsObject = JsObject(
+    endpointLists.flatMap(k => cfg.value.get(k).map(v => k -> JsArray(candidateEntries(JsDefined(v))))) ++
+      cfg.value.get("intent_router_refs").map(v => "intent_router_refs" -> JsArray(describedEntries(JsDefined(v)))).toSeq ++
+      (endpointRefs ++ endpointTexts).flatMap(k => nonEmptyString(cfg.select(k)).map(v => k -> JsString(v))) ++
+      endpointNumbers.flatMap { case (k, _, _) => cfg.select(k).asOpt[BigDecimal].map(v => k -> JsNumber(v)) } ++
+      cfg.value.get("allowed_models").map(v => "allowed_models" -> JsArray(stringsOf(JsDefined(v)).map(JsString.apply))).toSeq
+  )
+
+  private def storedEndpoints(options: JsLookupResult): Seq[(String, JsObject)] =
+    options.select("endpoints").asOpt[JsObject].toSeq.flatMap(_.value.toSeq).collect { case (name, cfg: JsObject) => (name, cfg) }
+
+  // the named endpoints of a router, by name: an endpoint without a mode is a smart router, as the router reads it
+  private def endpointsJson(options: JsLookupResult): Seq[JsObject] = storedEndpoints(options).sortBy(_._1).map { case (name, cfg) =>
+    Json.obj("name" -> name, "mode" -> modeIdOf(cfg.select("mode")).getOrElse("smart")) ++ endpointFields(cfg)
+  }
+
+  // an endpoint as a form gives it: its name, its mode and the options it sets over the ones of its router. What it
+  // does not give is kept, an empty value gives the option of the router back
+  private def endpointGiven(e: JsObject, stored: Map[String, JsObject]): (String, JsObject) = {
+    val name = string(e, "name").map(_.trim).filter(_.nonEmpty).getOrElse(throw badRequest("an endpoint needs a 'name'"))
+    if (name.contains("/") || name.contains("###") || name == "_default") throw badRequest(s"'$name' can not name an endpoint: it is a model name, without '/'")
+    val current = stored.getOrElse(name, Json.obj())
+    val mode = string(e, "mode").map(_.trim).filter(_.nonEmpty).map(modeGiven).orElse(nonEmptyString(current.select("mode")))
+      .getOrElse(throw badRequest(s"the endpoint '$name' needs a 'mode' (code, auto, smart, intent or fusion)"))
+    def keyed(key: String)(read: JsValue => Option[JsValue]): Option[(String, JsValue)] = e.value.get(key) match {
+      case None => current.value.get(key).map(key -> _)
+      case Some(JsNull) => None
+      case Some(v) => read(v).map(key -> _)
+    }
+    val lists = endpointLists.flatMap(k => keyed(k) {
+      case JsArray(values) => Some(JsArray(candidatesGiven(k, values.toSeq, candidateEntries(current.select(k)))))
+      case _ => throw badRequest(s"'$k' must be an array of provider ids or { ref, model } objects")
+    })
+    val intent = keyed("intent_router_refs") {
+      case values: JsArray =>
+        val entries = describedEntries(JsDefined(values))
+        if (entries.size != values.value.size) throw badRequest("'intent_router_refs' entries need a 'ref'")
+        Some(JsArray(entries))
+      case _ => throw badRequest("'intent_router_refs' must be an array of { ref, model, description } objects")
+    }
+    val texts = (endpointRefs ++ endpointTexts).flatMap(k => keyed(k)(v => v.asOpt[String].map(_.trim).filter(_.nonEmpty).map(JsString.apply)))
+    val numbers = endpointNumbers.flatMap { case (k, min, max) => keyed(k)(v => v.asOpt[BigDecimal].map(n => JsNumber(n.max(BigDecimal(min)).min(BigDecimal(max))))) }
+    val allowed = keyed("allowed_models")(v => Some(JsArray(stringsOf(JsDefined(v)).map(_.trim).filter(_.nonEmpty).map(JsString.apply))))
+    (name, JsObject(Seq("mode" -> JsString(mode)) ++ lists ++ intent.toSeq ++ texts ++ numbers ++ allowed.toSeq))
   }
 
   // the candidates of the intent router: a provider, the model it serves, what it is good at and the name of its option
@@ -1799,6 +1876,10 @@ class AiStudioApi(env: Env, ext: AiExtension) {
       "id" -> Providers.idOf(r),
       "name" -> r.select("name").asOptString.getOrElse(""),
       "modes" -> routerModes.filter(m => refsOf(o.select(m.refs)).nonEmpty).map(_.id),
+      // the routing model the router is set to, whatever model it is asked for, and its named endpoints: a router
+      // with endpoints answers their names only
+      "mode" -> optString(modeIdOf(o.select("mode"))),
+      "endpoints" -> endpointsJson(o),
       "code_router_refs" -> candidateEntries(o.select("code_router_refs")),
       "min_coding_score" -> o.select("min_coding_score").asOpt[BigDecimal].getOrElse(BigDecimal(0.5)),
       "auto_router_refs" -> candidateEntries(o.select("auto_router_refs")),
@@ -1940,17 +2021,13 @@ class AiStudioApi(env: Env, ext: AiExtension) {
         "name" -> "router", "code_router_refs" -> Json.arr(), "min_coding_score" -> 0.5, "auto_router_refs" -> Json.arr(), "auto_router_classifier_ref" -> JsNull,
         "cost_quality_tradeoff" -> 7, "allowed_models" -> Json.arr(), "fusion_router_refs" -> Json.arr(), "fusion_router_judge_ref" -> JsNull, "fusion_router_synthesizer_ref" -> JsNull,
       ))
-      // candidates given as ids keep the model already configured for them, { ref, model } objects set it
+      // candidates given as ids keep the entry already configured for them, { ref, model, score, cost } objects set it
       def refs(key: String): Seq[JsValue] = {
         val previous = current.select(key).asOpt[Seq[JsValue]].getOrElse(Seq.empty)
         form.value.get(key) match {
           case None => previous
           case Some(JsNull) => Seq.empty
-          case Some(JsArray(values)) => values.toSeq.map {
-            case JsString(id) => previous.find(e => e.isInstanceOf[JsObject] && entryRef(e) == id).getOrElse(JsString(id))
-            case o: JsObject => candidateEntries(JsDefined(Json.arr(o))).headOption.getOrElse(throw badRequest(s"'$key' entries need a 'ref'"))
-            case _ => throw badRequest(s"'$key' must be an array of provider ids or { ref, model } objects")
-          }
+          case Some(JsArray(values)) => candidatesGiven(key, values.toSeq, previous)
           case Some(_) => throw badRequest(s"'$key' must be an array of provider ids or { ref, model } objects")
         }
       }
@@ -1976,9 +2053,41 @@ class AiStudioApi(env: Env, ext: AiExtension) {
       val minConfidence = (if (has(form, "intent_router_min_confidence")) number(form, "intent_router_min_confidence") else current.select("intent_router_min_confidence").asOpt[BigDecimal])
         .map(_.max(BigDecimal(0)).min(BigDecimal(1)))
       val singles = Seq("auto_router_classifier_ref", "fusion_router_judge_ref", "fusion_router_synthesizer_ref").map(k => k -> ref(k))
+      // the routing model the router is set to, and its named endpoints, kept when the form does not give them
+      val stored = existing.map(e => storedEndpoints(e.select("options"))).getOrElse(Seq.empty)
+      val mode: Option[JsValue] = if (has(form, "mode")) Some(optString(string(form, "mode").map(_.trim).filter(_.nonEmpty).map(modeGiven))) else None
+      val endpoints: Option[Seq[(String, JsObject)]] = form.value.get("endpoints") match {
+        case None => None
+        case Some(JsNull) => Some(Seq.empty)
+        case Some(JsArray(values)) =>
+          val named = values.toSeq.map {
+            case e: JsObject => endpointGiven(e, stored.toMap)
+            case _ => throw badRequest("'endpoints' entries must be { name, mode, ... } objects")
+          }
+          named.groupBy(_._1).collectFirst { case (n, same) if same.size > 1 => n }.foreach(n => throw badRequest(s"two endpoints are named '$n'"))
+          Some(named)
+        case Some(_) => throw badRequest("'endpoints' must be an array of { name, mode, ... } objects")
+      }
+      val effectiveEndpoints = endpoints.getOrElse(stored)
+      val effectiveMode = mode.map(_.asOptString).getOrElse(existing.flatMap(e => nonEmptyString(e.at("options.mode")))).flatMap(m => modeIdOf(JsDefined(JsString(m))))
+      val lists: Map[String, Seq[JsValue]] = Map("code_router_refs" -> code, "auto_router_refs" -> auto, "smart_router_refs" -> smart, "intent_router_refs" -> intent, "fusion_router_refs" -> fusion)
       checkVirtualName(name, providers, existing)
-      if (code.isEmpty && auto.isEmpty && fusion.isEmpty && smart.isEmpty && intent.isEmpty) throw badRequest("a router needs candidates in 'code_router_refs', 'auto_router_refs', 'smart_router_refs', 'intent_router_refs' or 'fusion_router_refs'")
-      ((code ++ auto ++ fusion ++ smart ++ intent).map(entryRef) ++ singles.flatMap(_._2)).filterNot(real.contains).headOption.foreach(r => throw badRequest(s"'$r' is not a provider of this workspace"))
+      if (effectiveEndpoints.nonEmpty) {
+        // an endpoint routes on its own candidates, or on the ones of its router
+        effectiveEndpoints.foreach { case (n, cfg) =>
+          val key = refsKeyOf(modeIdOf(cfg.select("mode")).getOrElse("smart"))
+          if (refsOf(cfg.select(key)).isEmpty && lists(key).isEmpty) throw badRequest(s"the endpoint '$n' needs candidates: in its own '$key', or in the one of the router")
+        }
+      } else effectiveMode match {
+        case Some(m) => if (lists(refsKeyOf(m)).isEmpty) throw badRequest(s"a router set to the $m-router needs candidates in '${refsKeyOf(m)}'")
+        case None => if (code.isEmpty && auto.isEmpty && fusion.isEmpty && smart.isEmpty && intent.isEmpty) throw badRequest("a router needs candidates in 'code_router_refs', 'auto_router_refs', 'smart_router_refs', 'intent_router_refs' or 'fusion_router_refs'")
+      }
+      val endpointProviders = endpoints.getOrElse(Seq.empty).flatMap { case (_, cfg) =>
+        (endpointLists :+ "intent_router_refs").flatMap(k => refsOf(cfg.select(k))) ++ endpointRefs.filterNot(_ == "decision_model_ref").flatMap(k => nonEmptyString(cfg.select(k)))
+      }
+      ((code ++ auto ++ fusion ++ smart ++ intent).map(entryRef) ++ singles.flatMap(_._2) ++ endpointProviders).filterNot(real.contains).headOption.foreach(r => throw badRequest(s"'$r' is not a provider of this workspace"))
+      endpoints.getOrElse(Seq.empty).flatMap { case (_, cfg) => nonEmptyString(cfg.select("decision_model_ref")) }
+        .filterNot(decisionModels.map(_.select("id").asString).contains).headOption.foreach(m => throw badRequest(s"the decision model '$m' does not belong to this workspace"))
       val entity = virtualEntity(ws, existing, name, "Otoroshi router", "otoroshi", Json.obj(
         "code_router_refs" -> code,
         "min_coding_score" -> clamped("min_coding_score", 0, 1, BigDecimal(0.5)),
@@ -2000,6 +2109,9 @@ class AiStudioApi(env: Env, ext: AiExtension) {
         "fusion_router_judge_model" -> optString(ref("fusion_router_judge_model")),
         "fusion_router_synthesizer_ref" -> optString(singles(2)._2),
         "fusion_router_synthesizer_model" -> optString(ref("fusion_router_synthesizer_model")),
+      ) ++ JsObject(
+        mode.map("mode" -> _).toSeq ++
+          endpoints.map(e => "endpoints" -> (if (e.isEmpty) JsNull else JsObject(e))).toSeq
       ))
       (if (existing.isDefined) Providers.update(entity) else Providers.create(entity))
         .flatMap(saved => syncWorkspaceRefs(ws.id).map(_ => routerJson(saved)))

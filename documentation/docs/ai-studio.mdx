@@ -328,6 +328,16 @@ enough for it. The **intent router** has it pick, among the candidates you descr
 
 *An intent router: you say what each candidate is good at, the decision model sends each request to the right one.*
 
+A router is called the way you choose. By its **routing models** (`<router>/smart-router`, `<router>/intent-router`…),
+as **one model** answering whatever model it is asked for (`<router>/_default`, the natural default provider of a
+workspace), or by **named models** of your own: one router then serves your `assistant`, your `support`, your
+`coder`, each with its routing model and its candidates. Self-hosted models the gateway knows neither the quality nor
+the price of are ranked on the **score** and the **cost** you give them.
+
+![A router serving named models, each with its routing model and its candidates](/img/ai-studio-router-named.png)
+
+*Named models: one router, several models of your own, each routed its way.*
+
 ### Give models tools and prompts
 
 **Presets** are reusable system prompts. Pick one in the chat, or name it in the `context` field of a
@@ -597,7 +607,7 @@ models from the catalog, workspace quotas, every provider selected for a preset 
 | `GET` `PUT /workspaces/:id/guardrails` | Content policies of the workspace (`items`, `fail_on_deny`), applied to every provider. |
 | `GET` `PUT /workspaces/:id/model-access` | Models the workspace may call (`include`, `exclude`). |
 | `GET` `PUT /workspaces/:id/routing` | Default provider (`default_provider`) and fallbacks (`fallbacks`: provider id to fallback id, `null` to remove). |
-| `/workspaces/:id/load-balancers[/:id]`, `/workspaces/:id/routers[/:id]` | Load balancers (`name`, `strategy`, `targets`) and [Otoroshi routers](/docs/llm-gateway/otoroshi-router) (candidates, judges and settings of the code, auto and fusion routers). |
+| `/workspaces/:id/load-balancers[/:id]`, `/workspaces/:id/routers[/:id]` | Load balancers (`name`, `strategy`, `targets`) and [Otoroshi routers](/docs/llm-gateway/otoroshi-router) (candidates, judges and settings of the code, auto, smart, intent and fusion routers, a candidate's own `score` and `cost`, the routing model it is set to as `mode`, and its named models as `endpoints`: `name`, `mode` and the options set over the ones of the router). |
 | `/workspaces/:id/presets[/:id]` | Presets: `name`, `description`, `system`, `trailing`, `providers`. |
 | `/workspaces/:id/tools/functions[/:id]`, `/tools/mcp[/:id]`, `/tools/search[/:id]` | HTTP functions, MCP connectors and web search engines, with the `providers` they are available on. An http function takes `kreuzberg` to get its response as markdown, and `template` (`web_fetch`) on creation to get a ready-made one. New MCP connectors get the stateless `http_2026_07_28` transport; an existing one keeps the transport it was given. |
 | `GET` `PUT` `DELETE /workspaces/:id/mcp-server` | The MCP server exposed on `/mcp`: `name`, `description`, `enabled`, `functions` and `connectors` (ids of the tools of the workspace). `PUT` creates it and starts serving it, `DELETE` stops serving and removes it. |

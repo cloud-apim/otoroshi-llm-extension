@@ -281,6 +281,13 @@ const editRouter = (mode) => async (page) => {
   await page.waitForTimeout(600);
 };
 
+// The edit dialog of the first router of the workspace serving named models (`endpoints`), which opens on them. The
+// workspace needs such a router, its models with their routing model and candidates
+const editNamedRouter = async (page) => {
+  await page.locator('.table tr:has(code):not(:has(code:has-text("-router"))):not(:has(code:has-text("_default"))):has(button:text-is("Edit")) button:text-is("Edit")').first().click();
+  await page.waitForTimeout(900);
+};
+
 // the editor of a content policy, narrowed to the calls of two api keys, closed without saving
 const editGuardrail = async (page) => {
   await page.locator('.table button:text-is("Edit")').first().click();
@@ -342,6 +349,7 @@ const SHOTS = [
   // the dialog alone, in a viewport tall enough for it to show its whole form without scrolling
   { name: 'router-smart', url: ws('/routing'), height: 1900, element: 'dialog.modal', before: editRouter('Smart router') },
   { name: 'router-intent', url: ws('/routing'), height: 1900, element: 'dialog.modal', before: editRouter('Intent router') },
+  { name: 'router-named', url: ws('/routing'), height: 1900, element: 'dialog.modal', before: editNamedRouter },
   { name: 'tools', url: ws('/tools') },
   { name: 'presets', url: ws('/presets') },
   { name: 'mcp-server', url: ws('/mcp-server') },

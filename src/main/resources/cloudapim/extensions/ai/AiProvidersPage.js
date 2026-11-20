@@ -505,6 +505,45 @@ class ProviderRefWithModel extends Component {
   }
 }
 
+// a candidate of the code, auto and smart routers: a provider, the model it serves, and optionally the score and the
+// cost it is ranked on, instead of the coding quality index and the price list
+class RouterCandidateRef extends Component {
+  render() {
+    const raw = this.props.itemValue;
+    const item = typeof raw === 'string' ? { ref: raw } : (raw || {});
+    return (
+      React.createElement(Form, {
+        flow: ['ref', 'model', 'score', 'cost'],
+        schema: {
+          ref: { type: 'select', props: {
+            label: 'Provider',
+            placeholder: 'Select a provider',
+            valuesFrom: '/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/providers',
+            transformer: (a) => ({ value: a.id, label: a.name }),
+          } },
+          model: { type: 'string', props: { label: 'Model', placeholder: 'Default model of the provider' } },
+          score: { type: 'string', props: { label: 'Score', placeholder: 'Coding quality index (about 0 to 100)' } },
+          cost: { type: 'string', props: { label: 'Cost', placeholder: 'Dollars per token (input + 3 x output)' } },
+        },
+        value: { ...item, model: item.model || '', score: item.score === undefined || item.score === null ? '' : String(item.score), cost: item.cost === undefined || item.cost === null ? '' : String(item.cost) },
+        onChange: (i) => {
+          const next = { ...i };
+          if (!next.model || !String(next.model).trim()) delete next.model;
+          // a score or a cost is a number, typed as text so that decimals can be typed
+          ['score', 'cost'].forEach((field) => {
+            const v = next[field] === undefined || next[field] === null ? '' : String(next[field]).trim().replace(',', '.');
+            if (v === '' || Number.isNaN(Number(v))) delete next[field];
+            else next[field] = Number(v);
+          });
+          // a bare provider stays a plain id, the format every version of the extension reads
+          this.props.value[this.props.idx] = Object.keys(next).length === 1 && next.ref !== undefined ? next.ref : next;
+          this.props.onChange(this.props.value);
+        }
+      }, null)
+    );
+  }
+}
+
 // a candidate of the intent-router: a provider, the model it serves, and what it is good at
 class ProviderRefWithDescription extends Component {
   render() {
@@ -1417,13 +1456,38 @@ class AiProvidersPage extends Component {
         component: ProviderRefWithModel,
       }
     },
+    'options.mode': {
+      type: 'select',
+      props: {
+        label: 'Routing model',
+        isClearable: true,
+        placeholder: 'Read in the model name of each request',
+        possibleValues: [
+          { label: 'code-router', value: 'code-router' },
+          { label: 'auto-router', value: 'auto-router' },
+          { label: 'smart-router', value: 'smart-router' },
+          { label: 'intent-router', value: 'intent-router' },
+          { label: 'fusion-router', value: 'fusion-router' },
+        ],
+        help: 'Optional: the routing model of the router, whatever model it is asked for (`<router>/_default` included). Without it, the model name of each request says which routing model serves it.',
+      }
+    },
+    'options.endpoints': {
+      type: 'jsonobjectcode',
+      props: {
+        label: 'Named endpoints',
+        mode: 'json',
+        height: '200px',
+        help: 'Optional: models of your own names, each mapped to its `mode` (smart-router when none is given) and the options of that routing model, read over the ones of the router. E.g. { "assistant": { "mode": "smart-router", "smart_router_refs": ["provider_xxx"] } }. A router with named endpoints answers their names only.',
+      }
+    },
     'options.code_router_refs': {
       type: 'array',
       props: {
         label: 'Code Router Providers',
-        help: 'each candidate uses the model set here, or the default model of its provider',
+        help: 'each candidate uses the model set here, or the default model of its provider. A score and a cost rank it instead of the coding quality index and the price list',
         defaultValue: '',
-        component: ProviderRefWithModel,
+        component: RouterCandidateRef,
       }
     },
     'options.min_coding_score': {
@@ -1443,7 +1507,7 @@ class AiProvidersPage extends Component {
         label: 'Auto Router Providers',
         help: 'each candidate uses the model set here, or the default model of its provider',
         defaultValue: '',
-        component: ProviderRefWithModel,
+        component: RouterCandidateRef,
       }
     },
     'options.auto_router_classifier_ref': {
@@ -1511,7 +1575,7 @@ class AiProvidersPage extends Component {
         label: 'Smart Router Providers',
         help: 'each candidate uses the model set here, or the default model of its provider. The decision model rates how demanding a request is, and the cheapest candidate that is good enough for it answers',
         defaultValue: '',
-        component: ProviderRefWithModel,
+        component: RouterCandidateRef,
       }
     },
     'options.smart_router_min_score': {
@@ -1818,6 +1882,9 @@ class AiProvidersPage extends Component {
         'ai_studio_origin', '_loc', 'id', 'name', 'description',
         '<<<Provider',
         'provider',
+        '<<<Called as (routing model and named endpoints)',
+        'options.mode',
+        'options.endpoints',
         '<<<code-router (candidates + routing)',
         'options.code_router_refs',
         'options.min_coding_score',

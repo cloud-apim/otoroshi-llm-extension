@@ -142,41 +142,139 @@ const refsOf = (value) => (value || []).map((r) => (typeof r === 'string' ? r : 
 
 export const configuredModes = (router) => ROUTER_MODES.filter((m) => (router.modes || []).includes(m.id));
 
+export const modeOf = (id) => ROUTER_MODES.find((m) => m.id === id) || ROUTER_MODES[2];
+
 // the candidates of the intent router as the form edits them: a provider, the model it serves, what it is good at
 const describedOf = (value) => (value || []).map((r) => (typeof r === 'string' ? { ref: r, model: '', description: '' } : { ...r, ref: r.ref || '', model: r.model || '', description: r.description || '' }));
 
-function RouterModal({ workspace, router, providers, decisionModels, existingNames, onClose, onSaved }) {
-  const toast = useToast();
-  const o = router || {};
-  const [mode, setMode] = useState((router && (configuredModes(router)[0] || {}).id) || 'auto');
-  const [form, setForm] = useState({
-    name: router ? router.name : 'router',
-    code_router_refs: refsOf(o.code_router_refs),
-    min_coding_score: o.min_coding_score ?? 0.5,
-    auto_router_refs: refsOf(o.auto_router_refs),
-    auto_router_classifier_ref: o.auto_router_classifier_ref || '',
-    cost_quality_tradeoff: o.cost_quality_tradeoff ?? 7,
-    allowed_models: o.allowed_models || [],
-    decision_model_ref: o.decision_model_ref || '',
-    decision_model_model: o.decision_model_model || '',
-    smart_router_refs: refsOf(o.smart_router_refs),
-    smart_router_min_score: o.smart_router_min_score ?? 0,
-    smart_router_max_score: o.smart_router_max_score ?? 1,
-    intent_router_refs: describedOf(o.intent_router_refs),
-    intent_router_instructions: o.intent_router_instructions || '',
-    intent_router_min_confidence: o.intent_router_min_confidence ?? '',
-    fusion_router_refs: refsOf(o.fusion_router_refs),
-    fusion_router_judge_ref: o.fusion_router_judge_ref || '',
-    fusion_router_synthesizer_ref: o.fusion_router_synthesizer_ref || '',
-  });
-  const [saving, setSaving] = useState(false);
-  const set = (patch) => setForm((f) => ({ ...f, ...patch }));
-  const nameTaken = existingNames.includes(form.name) && (!router || router.name !== form.name);
-  // a candidate of the intent router counts once it names a provider
-  const countOf = (m) => form[m.refs].filter((r) => (typeof r === 'string' ? r : r.ref)).length;
-  const hasCandidates = ROUTER_MODES.some((m) => countOf(m) > 0);
+// the candidate lists a provider is picked in, and among them the ones ranked on a score and a cost
+const LISTS = ['code_router_refs', 'auto_router_refs', 'smart_router_refs', 'fusion_router_refs'];
+const RANKED = ['code_router_refs', 'auto_router_refs', 'smart_router_refs'];
+
+// the options each routing model reads, the ones a named model sets for itself
+const MODE_FIELDS = {
+  code: ['code_router_refs', 'min_coding_score'],
+  auto: ['auto_router_refs', 'auto_router_classifier_ref', 'cost_quality_tradeoff', 'allowed_models'],
+  smart: ['smart_router_refs', 'decision_model_ref', 'decision_model_model', 'smart_router_min_score', 'smart_router_max_score'],
+  intent: ['intent_router_refs', 'decision_model_ref', 'decision_model_model', 'intent_router_instructions', 'intent_router_min_confidence'],
+  fusion: ['fusion_router_refs', 'fusion_router_judge_ref', 'fusion_router_synthesizer_ref'],
+};
+
+// the form of a routing configuration (a router, or one of its named models): the candidates by id, and the entry
+// stored for each of them (its model, its score and its cost)
+const formOf = (o) => ({
+  code_router_refs: refsOf(o.code_router_refs),
+  min_coding_score: o.min_coding_score ?? 0.5,
+  auto_router_refs: refsOf(o.auto_router_refs),
+  auto_router_classifier_ref: o.auto_router_classifier_ref || '',
+  cost_quality_tradeoff: o.cost_quality_tradeoff ?? 7,
+  allowed_models: o.allowed_models || [],
+  decision_model_ref: o.decision_model_ref || '',
+  decision_model_model: o.decision_model_model || '',
+  smart_router_refs: refsOf(o.smart_router_refs),
+  smart_router_min_score: o.smart_router_min_score ?? 0,
+  smart_router_max_score: o.smart_router_max_score ?? 1,
+  intent_router_refs: describedOf(o.intent_router_refs),
+  intent_router_instructions: o.intent_router_instructions || '',
+  intent_router_min_confidence: o.intent_router_min_confidence ?? '',
+  fusion_router_refs: refsOf(o.fusion_router_refs),
+  fusion_router_judge_ref: o.fusion_router_judge_ref || '',
+  fusion_router_synthesizer_ref: o.fusion_router_synthesizer_ref || '',
+  entries: Object.fromEntries(LISTS.map((k) => [k, Object.fromEntries((o[k] || []).map((r) => (typeof r === 'string' ? { ref: r } : r)).filter((e) => e.ref).map((e) => [e.ref, e]))])),
+});
+
+const num = (v, def) => (v === null || v === '' || v === undefined || Number.isNaN(Number(v)) ? def : Number(v));
+
+// a candidate as the api takes it: with the model already configured for it, and its score and cost when it has them
+const candidateOut = (form, key, ref) => {
+  const e = (form.entries[key] || {})[ref] || {};
+  return { ref, model: e.model || null, score: num(e.score, null), cost: num(e.cost, null) };
+};
+
+// the body of the fields of a routing configuration, all of them or the ones of one routing model
+const bodyOf = (form, fields) => {
+  const all = {
+    code_router_refs: form.code_router_refs.map((r) => candidateOut(form, 'code_router_refs', r)),
+    min_coding_score: num(form.min_coding_score, 0.5),
+    auto_router_refs: form.auto_router_refs.map((r) => candidateOut(form, 'auto_router_refs', r)),
+    auto_router_classifier_ref: form.auto_router_classifier_ref || null,
+    cost_quality_tradeoff: num(form.cost_quality_tradeoff, 7),
+    allowed_models: form.allowed_models.map((m) => m.trim()).filter(Boolean),
+    decision_model_ref: form.decision_model_ref || null,
+    decision_model_model: (form.decision_model_ref && form.decision_model_model.trim()) || null,
+    smart_router_refs: form.smart_router_refs.map((r) => candidateOut(form, 'smart_router_refs', r)),
+    smart_router_min_score: num(form.smart_router_min_score, 0),
+    smart_router_max_score: num(form.smart_router_max_score, 1),
+    intent_router_refs: form.intent_router_refs.filter((c) => c.ref),
+    intent_router_instructions: form.intent_router_instructions.trim() || null,
+    intent_router_min_confidence: form.intent_router_min_confidence === '' || form.intent_router_min_confidence === null ? null : num(form.intent_router_min_confidence, 0),
+    fusion_router_refs: form.fusion_router_refs.slice(0, 8).map((r) => candidateOut(form, 'fusion_router_refs', r)),
+    fusion_router_judge_ref: form.fusion_router_judge_ref || null,
+    fusion_router_synthesizer_ref: form.fusion_router_synthesizer_ref || null,
+  };
+  return fields ? Object.fromEntries(fields.map((f) => [f, all[f]])) : all;
+};
+
+// a candidate of the intent router counts once it names a provider
+const countOf = (form, mode) => form[mode.refs].filter((r) => (typeof r === 'string' ? r : r.ref)).length;
+
+// The score and the cost a candidate is ranked on, when the coding quality index or the price list do not know its
+// model, or when it is to be ranked differently
+function Ranking({ form, set, listKey, providers }) {
+  const [open, setOpen] = useState(() => form[listKey].some((ref) => {
+    const e = (form.entries[listKey] || {})[ref];
+    return e && (e.score != null || e.cost != null);
+  }));
+  const byId = Object.fromEntries(providers.map((p) => [p.id, p]));
+  const setEntry = (ref, patch) => {
+    const entries = form.entries[listKey] || {};
+    set({ entries: { ...form.entries, [listKey]: { ...entries, [ref]: { ...(entries[ref] || { ref }), ...patch } } } });
+  };
+  if (form[listKey].length === 0) return null;
+  if (!open) {
+    return (
+      <button className="btn sm ghost" style={{ alignSelf: 'flex-start' }} onClick={() => setOpen(true)}>
+        Rank the candidates yourself
+      </button>
+    );
+  }
+  return (
+    <Field label="Ranking" hint="Optional, for models the gateway does not know, such as self-hosted ones, or that you rank differently. A score is compared with the coding quality index (about 0 to 100) and a cost with the price list (dollars per token, input + 3 × output): when every candidate has its own, any scale works.">
+      <div className="stack tight">
+        <div className="row faint small">
+          <span className="grow">Candidate</span>
+          <span style={{ width: 120 }}>Score</span>
+          <span style={{ width: 160 }}>Cost per token</span>
+        </div>
+        {form[listKey].map((ref) => {
+          const e = (form.entries[listKey] || {})[ref] || {};
+          const p = byId[ref] || { name: ref };
+          return (
+            <div key={ref} className="row">
+              <span className="grow">
+                {p.name} <span className="faint small">({e.model || p.model || 'default model'})</span>
+              </span>
+              <div style={{ width: 120 }}>
+                <NumberInput value={e.score ?? null} onChange={(v) => setEntry(ref, { score: v === null ? undefined : v })} min="0" step="any" placeholder="Score" title="score" />
+              </div>
+              <div style={{ width: 160 }}>
+                <NumberInput value={e.cost ?? null} onChange={(v) => setEntry(ref, { cost: v === null ? undefined : v })} min="0" step="any" placeholder="Cost per token" title="cost per token" />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Field>
+  );
+}
+
+// The fields of one routing model, for a router or for one of its named models
+function ModeFields({ mode, form, set, providers, decisionModels }) {
   const decisionOptions = (decisionModels || []).map((d) => ({ value: d.id, label: d.name }));
   const decisionDefault = ((decisionModels || []).find((d) => d.id === form.decision_model_ref) || {}).model;
+  const candidateOptions = providers.map((p) => ({ value: p.id, label: `${p.name} (${p.model || 'default model'})` }));
+  const providerOptions = providers.map((p) => ({ value: p.id, label: p.name }));
+  const setIntent = (idx, patch) => set({ intent_router_refs: form.intent_router_refs.map((c, i) => (i === idx ? { ...c, ...patch } : c)) });
   // the decision model of the smart and the intent routers, shared by both, and the model it answers with
   const decisionFields = (hint) => (
     <div className="form-grid">
@@ -188,90 +286,14 @@ function RouterModal({ workspace, router, providers, decisionModels, existingNam
       </Field>
     </div>
   );
-  const setIntent = (idx, patch) => set({ intent_router_refs: form.intent_router_refs.map((c, i) => (i === idx ? { ...c, ...patch } : c)) });
-  const candidateOptions = providers.map((p) => ({ value: p.id, label: `${p.name} (${p.model || 'default model'})` }));
-  const providerOptions = providers.map((p) => ({ value: p.id, label: p.name }));
-
-  // Candidates are sent by id: the api keeps the model already configured for each of them, and what the form
-  // does not show (the models of the judges) as it is. It bounds the numbers.
-  const save = async () => {
-    setSaving(true);
-    try {
-      const num = (v, def) => (v === null || v === '' || Number.isNaN(Number(v)) ? def : Number(v));
-      const body = {
-        name: form.name,
-        code_router_refs: form.code_router_refs,
-        min_coding_score: num(form.min_coding_score, 0.5),
-        auto_router_refs: form.auto_router_refs,
-        auto_router_classifier_ref: form.auto_router_classifier_ref || null,
-        cost_quality_tradeoff: num(form.cost_quality_tradeoff, 7),
-        allowed_models: form.allowed_models.map((m) => m.trim()).filter(Boolean),
-        decision_model_ref: form.decision_model_ref || null,
-        decision_model_model: (form.decision_model_ref && form.decision_model_model.trim()) || null,
-        smart_router_refs: form.smart_router_refs,
-        smart_router_min_score: num(form.smart_router_min_score, 0),
-        smart_router_max_score: num(form.smart_router_max_score, 1),
-        intent_router_refs: form.intent_router_refs.filter((c) => c.ref),
-        intent_router_instructions: form.intent_router_instructions.trim() || null,
-        intent_router_min_confidence: form.intent_router_min_confidence === '' || form.intent_router_min_confidence === null ? null : num(form.intent_router_min_confidence, 0),
-        fusion_router_refs: form.fusion_router_refs.slice(0, 8),
-        fusion_router_judge_ref: form.fusion_router_judge_ref || null,
-        fusion_router_synthesizer_ref: form.fusion_router_synthesizer_ref || null,
-      };
-      if (router) await backend.run('routers.update', workspace.id, { rid: router.id, body });
-      else await backend.run('routers.create', workspace.id, { body });
-      toast.success(router ? 'Router saved' : 'Router created');
-      onSaved();
-    } catch (e) {
-      toast.error(e);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const current = ROUTER_MODES.find((m) => m.id === mode);
   return (
-    <Modal
-      open
-      size="wide"
-      onClose={onClose}
-      title={router ? `Edit ${router.name}` : 'New router'}
-      footer={
-        <>
-          <button className="btn" onClick={onClose}>
-            Cancel
-          </button>
-          <button className="btn primary" disabled={!form.name || nameTaken || !hasCandidates || saving} onClick={save}>
-            {saving ? 'Saving…' : router ? 'Save' : 'Create'}
-          </button>
-        </>
-      }
-    >
-      <Field label="Name" hint="One router serves the models below: configure the ones you want to use." error={nameTaken ? 'already used in this workspace' : null}>
-        <TextInput value={form.name} onChange={(v) => set({ name: connectionName(v) })} />
-      </Field>
-      <div className="row between wrap">
-        <Segmented
-          value={mode}
-          onChange={setMode}
-          options={ROUTER_MODES.map((m) => ({ value: m.id, label: `${m.label}${countOf(m) ? ` · ${countOf(m)}` : ''}` }))}
-        />
-        <span className="row">
-          <code>
-            {form.name || 'router'}/{current.model}
-          </code>
-          <CopyButton text={`${form.name || 'router'}/${current.model}`} />
-        </span>
-      </div>
-      <p className="muted" style={{ margin: '12px 0 4px' }}>
-        {current.description} When a candidate fails, the next best one is tried.
-      </p>
-
+    <>
       {mode === 'code' && (
         <>
           <Field label="Candidates" hint="Each candidate is called with its own default model. Models missing from the quality index are only used when no ranked candidate answers.">
             <Checks options={candidateOptions} value={form.code_router_refs} onChange={(v) => set({ code_router_refs: v })} />
           </Field>
+          <Ranking form={form} set={set} listKey="code_router_refs" providers={providers} />
           <Field label="Minimum coding quality" hint="From 0 to 1, relative to your best candidate: 0.5 accepts any model at least half as good. Callers can override it with a `min_coding_score` field.">
             <NumberInput value={form.min_coding_score} onChange={(v) => set({ min_coding_score: v })} min="0" max="1" step="0.05" />
           </Field>
@@ -283,6 +305,7 @@ function RouterModal({ workspace, router, providers, decisionModels, existingNam
           <Field label="Candidates" hint="Each candidate is called with its own default model.">
             <Checks options={candidateOptions} value={form.auto_router_refs} onChange={(v) => set({ auto_router_refs: v })} />
           </Field>
+          <Ranking form={form} set={set} listKey="auto_router_refs" providers={providers} />
           <div className="form-grid">
             <Field label="Judge" hint="A small, fast model is enough to route. Defaults to the cheapest candidate.">
               <Select value={form.auto_router_classifier_ref} onChange={(v) => set({ auto_router_classifier_ref: v })} placeholder="Cheapest candidate" options={providerOptions} />
@@ -302,6 +325,7 @@ function RouterModal({ workspace, router, providers, decisionModels, existingNam
           <Field label="Candidates" hint="Each candidate is called with its own default model. Models missing from the quality index are only used when no ranked candidate answers.">
             <Checks options={candidateOptions} value={form.smart_router_refs} onChange={(v) => set({ smart_router_refs: v })} />
           </Field>
+          <Ranking form={form} set={set} listKey="smart_router_refs" providers={providers} />
           {decisionFields('Rates how demanding each request is, from trivial to expert. Without it, every request is of average difficulty.')}
           <div className="form-grid">
             <Field label="Quality for a trivial request" hint="From 0 to 1, relative to your best candidate. 0 lets the cheapest candidate answer trivial requests.">
@@ -362,6 +386,170 @@ function RouterModal({ workspace, router, providers, decisionModels, existingNam
             <Field label="Synthesizer" hint="Writes the final answer from the analysis, streamed back to the caller. Defaults to the best panel member.">
               <Select value={form.fusion_router_synthesizer_ref} onChange={(v) => set({ fusion_router_synthesizer_ref: v })} placeholder="Best panel member" options={providerOptions} />
             </Field>
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
+// how a router is called: by the routing models it serves, as one model, or by names of your own
+const EXPOSURES = [
+  { value: 'modes', label: 'Routing models' },
+  { value: 'fixed', label: 'One model' },
+  { value: 'named', label: 'Named models' },
+];
+
+// a model name of your own: no provider prefix, no space
+const endpointName = (v) => v.replace(/[^a-zA-Z0-9._-]+/g, '-');
+
+function RouterModal({ workspace, router, providers, decisionModels, existingNames, onClose, onSaved }) {
+  const toast = useToast();
+  const o = router || {};
+  const [exposure, setExposure] = useState((o.endpoints || []).length ? 'named' : o.mode ? 'fixed' : 'modes');
+  const [mode, setMode] = useState((router && (configuredModes(router)[0] || {}).id) || 'auto');
+  const [fixed, setFixed] = useState(o.mode || (router && (configuredModes(router)[0] || {}).id) || 'smart');
+  const [name, setName] = useState(router ? router.name : 'router');
+  const [form, setForm] = useState(() => formOf(o));
+  // a named model starts from the options of the router, and sets the ones of its routing model for itself
+  const [endpoints, setEndpoints] = useState(() => (o.endpoints || []).map((e) => ({ name: e.name, mode: e.mode, form: formOf({ ...o, ...e }) })));
+  const [saving, setSaving] = useState(false);
+  const set = (patch) => setForm((f) => ({ ...f, ...patch }));
+  const setEndpoint = (idx, patch) => setEndpoints((all) => all.map((e, i) => (i === idx ? { ...e, ...patch } : e)));
+  const setEndpointForm = (idx) => (patch) => setEndpoints((all) => all.map((e, i) => (i === idx ? { ...e, form: { ...e.form, ...patch } } : e)));
+  const nameTaken = existingNames.includes(name) && (!router || router.name !== name);
+  const names = endpoints.map((e) => e.name);
+  const endpointsValid = endpoints.length > 0 && endpoints.every((e) => e.name && e.name !== '_default' && names.filter((n) => n === e.name).length === 1 && countOf(e.form, modeOf(e.mode)) > 0);
+  const valid = exposure === 'named' ? endpointsValid : exposure === 'fixed' ? countOf(form, modeOf(fixed)) > 0 : ROUTER_MODES.some((m) => countOf(form, m) > 0);
+
+  // Candidates are sent with the entry already configured for each of them (its model, its score and its cost),
+  // and what the form does not show (the models of the judges) is kept as it is. The api bounds the numbers.
+  const save = async () => {
+    setSaving(true);
+    try {
+      const body = {
+        name,
+        ...bodyOf(form),
+        mode: exposure === 'fixed' ? fixed : null,
+        endpoints: exposure === 'named' ? endpoints.map((e) => ({ name: e.name, mode: e.mode, ...bodyOf(e.form, MODE_FIELDS[e.mode]) })) : null,
+      };
+      if (router) await backend.run('routers.update', workspace.id, { rid: router.id, body });
+      else await backend.run('routers.create', workspace.id, { body });
+      toast.success(router ? 'Router saved' : 'Router created');
+      onSaved();
+    } catch (e) {
+      toast.error(e);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const current = modeOf(mode);
+  const routerName = name || 'router';
+  const call = (model) => (
+    <span className="row">
+      <code>
+        {routerName}/{model}
+      </code>
+      <CopyButton text={`${routerName}/${model}`} />
+    </span>
+  );
+  return (
+    <Modal
+      open
+      size="wide"
+      onClose={onClose}
+      title={router ? `Edit ${router.name}` : 'New router'}
+      footer={
+        <>
+          <button className="btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn primary" disabled={!name || nameTaken || !valid || saving} onClick={save}>
+            {saving ? 'Saving…' : router ? 'Save' : 'Create'}
+          </button>
+        </>
+      }
+    >
+      <Field label="Name" error={nameTaken ? 'already used in this workspace' : null}>
+        <TextInput value={name} onChange={(v) => setName(connectionName(v))} />
+      </Field>
+      <Field label="Called as">
+        <Segmented value={exposure} onChange={setExposure} options={EXPOSURES} />
+      </Field>
+
+      {exposure === 'modes' && (
+        <>
+          <p className="muted" style={{ margin: '4px 0 10px' }}>
+            The router serves each routing model you configure, called by its name.
+          </p>
+          <div className="row between wrap">
+            <Segmented value={mode} onChange={setMode} options={ROUTER_MODES.map((m) => ({ value: m.id, label: `${m.label}${countOf(form, m) ? ` · ${countOf(form, m)}` : ''}` }))} />
+            {call(current.model)}
+          </div>
+          <p className="muted" style={{ margin: '12px 0 4px' }}>
+            {current.description} When a candidate fails, the next best one is tried.
+          </p>
+          <ModeFields mode={mode} form={form} set={set} providers={providers} decisionModels={decisionModels} />
+        </>
+      )}
+
+      {exposure === 'fixed' && (
+        <>
+          <p className="muted" style={{ margin: '4px 0 10px' }}>
+            The router answers any model it is asked for with one routing model: call it with <code>{routerName}/_default</code>, or make it the default provider of the workspace.
+          </p>
+          <div className="row between wrap">
+            <Segmented value={fixed} onChange={setFixed} options={ROUTER_MODES.map((m) => ({ value: m.id, label: m.label }))} />
+            {call('_default')}
+          </div>
+          <p className="muted" style={{ margin: '12px 0 4px' }}>
+            {modeOf(fixed).description} When a candidate fails, the next best one is tried.
+          </p>
+          <ModeFields mode={fixed} form={form} set={set} providers={providers} decisionModels={decisionModels} />
+        </>
+      )}
+
+      {exposure === 'named' && (
+        <>
+          <p className="muted" style={{ margin: '4px 0 10px' }}>
+            Expose models under names of your own, each with its routing model and its candidates, so that one router serves your <code>assistant</code>, your <code>support</code>… The router answers these names only.
+          </p>
+          <div className="stack">
+            {endpoints.map((e, idx) => {
+              const duplicate = e.name && names.filter((n) => n === e.name).length > 1;
+              return (
+                <div key={idx} className="card">
+                  <div className="row between wrap">
+                    <div className="row">
+                      <div style={{ width: 220 }}>
+                        <TextInput value={e.name} onChange={(v) => setEndpoint(idx, { name: endpointName(v) })} placeholder="assistant" />
+                      </div>
+                      <Select value={e.mode} onChange={(v) => setEndpoint(idx, { mode: v })} options={ROUTER_MODES.map((m) => ({ value: m.id, label: m.label }))} />
+                    </div>
+                    <span className="row">
+                      {e.name && call(e.name)}
+                      <button className="copy-btn" onClick={() => setEndpoints(endpoints.filter((_, i) => i !== idx))} title="Remove">
+                        <Icon name="trash" />
+                      </button>
+                    </span>
+                  </div>
+                  {duplicate && <div className="error small">Two models have this name.</div>}
+                  <p className="muted" style={{ margin: '10px 0 4px' }}>
+                    {modeOf(e.mode).description}
+                  </p>
+                  <ModeFields mode={e.mode} form={e.form} set={setEndpointForm(idx)} providers={providers} decisionModels={decisionModels} />
+                </div>
+              );
+            })}
+            <button
+              className="btn sm"
+              style={{ alignSelf: 'flex-start' }}
+              onClick={() => setEndpoints([...endpoints, { name: endpoints.length ? `model-${endpoints.length + 1}` : 'assistant', mode: 'smart', form: formOf(bodyOf(form)) }])}
+            >
+              <Icon name="plus" />
+              Add a model
+            </button>
           </div>
         </>
       )}
@@ -570,7 +758,16 @@ export function RoutingPage() {
                   <tbody>
                     {routers.map((r) => {
                       const modes = configuredModes(r);
-                      const ids = [...new Set(modes.flatMap((m) => refsOf(r[m.refs])))];
+                      const named = r.endpoints || [];
+                      // the models the router answers: its named models, the one it is set to, or its routing models
+                      const calls = named.length
+                        ? named.map((e) => ({ model: e.name, label: modeOf(e.mode).label }))
+                        : r.mode
+                          ? [{ model: '_default', label: modeOf(r.mode).label }]
+                          : modes.map((m) => ({ model: m.model }));
+                      const ids = [...new Set([
+                        ...(named.length ? named.flatMap((e) => refsOf(e[modeOf(e.mode).refs] || r[modeOf(e.mode).refs])) : r.mode ? refsOf(r[modeOf(r.mode).refs]) : modes.flatMap((m) => refsOf(r[m.refs]))),
+                      ])];
                       return (
                         <tr key={r.id}>
                           <td>{r.name}</td>
@@ -584,14 +781,15 @@ export function RoutingPage() {
                             </div>
                           </td>
                           <td>
-                            {modes.length === 0 && <span className="muted">not configured</span>}
+                            {calls.length === 0 && <span className="muted">not configured</span>}
                             <div className="stack tight">
-                              {modes.map((m) => (
-                                <span key={m.id} className="row">
+                              {calls.map((c) => (
+                                <span key={c.model} className="row">
                                   <code>
-                                    {r.name}/{m.model}
+                                    {r.name}/{c.model}
                                   </code>
-                                  <CopyButton text={`${r.name}/${m.model}`} />
+                                  <CopyButton text={`${r.name}/${c.model}`} />
+                                  {c.label && <span className="faint small">{c.label}</span>}
                                 </span>
                               ))}
                             </div>

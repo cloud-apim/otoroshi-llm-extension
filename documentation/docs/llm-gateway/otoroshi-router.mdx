@@ -277,7 +277,8 @@ options of an endpoint are read over the router's own ones: here both endpoints 
 An API key restricted to `<router>/assistant` may call that endpoint and its candidates, and nothing else.
 
 A router without endpoints can fix its routing model with `options.mode` instead of reading it from the requested
-model name.
+model name: it then answers any model it is asked for, `<router>/_default` included, which makes it a natural default
+provider for a route.
 
 ## Configuration reference
 
@@ -303,16 +304,19 @@ model name.
 | `fusion_router_judge_model` | fusion-router | default model of the judge | Model of the judge provider |
 | `fusion_router_synthesizer_ref` | fusion-router | best panel member | Provider id of the model writing the final answer |
 | `fusion_router_synthesizer_model` | fusion-router | default model of the synthesizer | Model of the synthesizer provider |
-| `mode` | all | the requested model name | The routing model of the router, whatever model name it is called with |
-| `endpoints` | all | none | Named endpoints: a model name mapped to `mode` and the options of that routing model |
+| `mode` | all | the requested model name | The routing model of the router (`code-router`, `auto-router`, `smart-router`, `intent-router` or `fusion-router`), whatever model name it is called with |
+| `endpoints` | all | none | Named endpoints: a model name mapped to its `mode` (`smart-router` when none is given) and the options of that routing model |
 
 Candidate lists accept provider ids (`["provider_1"]`) or objects (`[{ "ref": "provider_1", "model": "gpt-4o-mini" }]`).
 A candidate uses the model given with it, or the default model of its provider: one provider can be a candidate
 several times with different models, each one scored and priced on its own model. A router never routes to itself.
 
-A candidate object may also carry its own `score` (from `0` to `1`) and `cost` (per token, in any unit shared by
-the candidates of the list). They replace the coding quality index and the price catalog for that candidate, for
-models the gateway does not know, such as self-hosted ones, or that you rank differently.
+A candidate object may also carry its own `score` and `cost`. They replace the coding quality index and the price
+catalog for that candidate: give them to models the gateway does not know, such as self-hosted ones, or that you rank
+differently. The router compares them with the other candidates of the list. When every candidate of the list carries
+its own, any scale works. When the list mixes them with models the gateway knows, give the `score` on the scale of the
+coding quality index (about `0` to `100`) and the `cost` in dollars per token, the input price plus three times the
+output price.
 
 ### Per-request parameters
 

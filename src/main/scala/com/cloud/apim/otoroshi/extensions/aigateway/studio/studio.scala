@@ -488,8 +488,10 @@ class AiStudio(env: Env, ext: AiExtension) {
             // the workspace endpoint serves both for every text provider, converting the call when it has to
             "endpoints" -> Json.arr("chat_completions", "responses"),
           )
-          // a router only lists the routing models that have candidates
+          // a router only lists the routing models that have candidates, and its named endpoints (the router
+          // checks their candidates when they are saved)
           def usable(model: String): Boolean = provider.provider != "otoroshi" ||
+            provider.options.select("endpoints").asOpt[JsObject].exists(_.keys.contains(model)) ||
             provider.options.select(s"${model.replace("-", "_")}_refs").asOpt[JsArray].exists(_.value.nonEmpty)
           def toModels(models: Seq[String]): Seq[JsObject] = models.filter(usable).map { model =>
             val id = if (textRefs.size == 1) model else if (model.contains("/")) s"${provider.slugName}###$model" else s"${provider.slugName}/$model"

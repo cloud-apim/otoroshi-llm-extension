@@ -3,7 +3,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 import org.apache.pekko.stream.scaladsl.Source
 import com.cloud.apim.otoroshi.extensions.aigateway.catalog.CodingIndex
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, DecisionModel}
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatCallKind, ChatClient, ChatMessage, ChatPrompt, ChatResponse, ChatResponseChunk, DecisionModelClient, DecisionModelClientInputOptions, DecisionRequests, KindBasedChatClient}
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatCallKind, ChatClient, ChatMessage, ChatPrompt, ChatResponse, ChatResponseChunk, DecisionModelClientInputOptions, DecisionRequests, KindBasedChatClient}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits.*
@@ -78,8 +78,13 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
   override def supportsStreaming: Boolean = true
 
   override def listModels(raw: Boolean, attrs: TypedMap)(using ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
+    // the names of its endpoints, the routing model it is set to, or the five routing models it reads in the name
     val named = endpoints.keys.toList.sorted
-    Right(if (named.nonEmpty) named else List("code-router", "auto-router", "smart-router", "intent-router", "fusion-router")).vfuture
+    val mode = provider.options.select("mode").asOptString.map(_.trim).filter(_.nonEmpty)
+    Right(
+      if (named.nonEmpty) named
+      else mode.map(m => List(m)).getOrElse(List("code-router", "auto-router", "smart-router", "intent-router", "fusion-router"))
+    ).vfuture
   }
 
   // Named endpoints: `options.endpoints` maps a model name to a router configuration of its own, its `mode` (one
@@ -115,9 +120,10 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
   // several times with different models, each one scored and priced on its own model
   private def resolveCandidates(refsKey: String, refKey: String)(using env: Env): Seq[RouterCandidate] = {
     val ext = env.adminExtensions.extension[AiExtension].get
-    // an entry may also carry its own `score` (0 to 1) and `cost` (per token, any unit shared by all candidates),
-    // for models the coding index or the price catalog do not know, or that whoever configures the router ranks
-    // differently
+    // an entry may also carry its own `score` and `cost`, for models the coding index or the price catalog do not
+    // know, or that whoever configures the router ranks differently. They are compared with the others of the list:
+    // on the scale of the coding index (about 0 to 100) and in dollars per token (input + 3 x output) when the list
+    // mixes them with known models, on any scale the list shares otherwise
     val refs: Seq[(String, Option[String], JsObject)] = provider.options.select(refsKey).asOpt[Seq[JsValue]].getOrElse(Seq.empty).flatMap {
       case JsString(id) => Some((id, None, Json.obj()))
       case obj: JsObject => obj.select("ref").asOptString.orElse(obj.select(refKey).asOptString).map(id => (id, obj.select("model").asOptString, obj))

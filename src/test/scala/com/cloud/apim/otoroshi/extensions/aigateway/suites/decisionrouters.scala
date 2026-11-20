@@ -400,5 +400,7 @@ class DecisionRoutersSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assert(refused.isLeft, s"an unknown endpoint should be refused, got ${refused}")
     ask(moded, "anything", "hello !")
     assertEquals(named.asked.last, "small")
+    val listed = ext.states.provider(moded.id).flatMap(_.getChatClient()).get.listModels(false, TypedMap.empty)(using ec).awaitf(10.seconds)
+    assertEquals(listed, Right(List("smart-router")), "a router set to one routing model lists that one")
   }
 }
