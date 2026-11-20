@@ -708,6 +708,9 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
             }
           )
           .applyOnIf(!accumulateStreamConsumptions)(
+            // a chunk with a `usage` is read for the consumption, then dropped only when that is all it carries
+            // (OpenAI's last chunk, `choices: []`): Gemini puts a `usage` on its text chunks too, and dropping
+            // those streamed answers without their text. The usage is not passed on either way (see the map below).
             _.filterNot { chunk =>
               if (chunk.usage.nonEmpty) {
                 val tokensUsage = acc.usage()
@@ -733,15 +736,20 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
                   case (obj, cache) => obj ++ Json.obj("cache" -> cache.json)
                 }
                 attrs.update(ChatClient.ApiUsageKey -> usage)
+                // several chunks may carry a usage (Gemini: every one): the last one seen replaces the slug
+                // this stream already wrote instead of adding one more
                 attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
                   case Some(obj@JsObject(_)) => {
                     val arr = obj.select("ai").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
-                    val newArr = arr ++ Seq(slug)
+                    val newArr = if (streamSlugWritten.getAndSet(true) && arr.nonEmpty) arr.init :+ slug else arr :+ slug
                     obj ++ Json.obj("ai" -> newArr)
                   }
-                  case None => Json.obj("ai" -> Seq(slug))
+                  case _ => {
+                    streamSlugWritten.set(true)
+                    Json.obj("ai" -> Seq(slug))
+                  }
                 }
-                true
+                chunk.choices.isEmpty
               } else {
                 false
               }

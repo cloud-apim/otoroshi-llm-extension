@@ -10,7 +10,8 @@ sbt "testOnly *ResponsesSuite *OpenAiResponsesConverterSuite \
               *CacheSuite *suites.AuditingSuite *ResilienceSuite *LoadBalancerSuite \
               *QuickJsGuardrailSuite *ProviderContextSuite \
               *FileContentPartsProxiesSuite *FileContentPartsSuite \
-              *CostsTestSuite *ProviderModelsOverrideSuite *SearchEngineModelSuite"
+              *CostsTestSuite *ProviderModelsOverrideSuite *SearchEngineModelSuite \
+              *StreamUsageChunksSuite"
 
 sbt "testOnly *A2ASuite *McpRegistrySuite *McpVirtualServerMergeSuite \
               *McpZeroTrustSuite *OpenApiMcpClientSuite *RampartEngineSuite"
