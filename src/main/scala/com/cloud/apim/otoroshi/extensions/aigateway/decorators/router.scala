@@ -73,6 +73,9 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
   override def isOpenAi: Boolean = true
   override def isCohere: Boolean = false
   override def isAnthropic: Boolean = false
+  // the router streams by streaming its candidates: without it, a streamed request is served as a blocking one,
+  // and the candidate, asked to stream, answers events the blocking path cannot read
+  override def supportsStreaming: Boolean = true
 
   override def listModels(raw: Boolean, attrs: TypedMap)(using ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
     Right(List("code-router", "auto-router", "smart-router", "intent-router", "fusion-router")).vfuture
