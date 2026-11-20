@@ -2955,6 +2955,21 @@ trait ChatClient {
     }
   }
 
+  // `invokeStream` for a client that may not stream, the way a client handing a streamed call over to another one
+  // asks it (router, load balancer): a client that does not stream is asked blocking, without the stream flag of
+  // the caller, and its answer handed out as a stream
+  final def tryInvokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
+    if (supportsStreaming) {
+      invokeStream(kind, prompt, attrs, originalBody)
+    } else {
+      invoke(kind, prompt, attrs, originalBody.asObject - "stream" - "stream_options").map {
+        case Left(err) => Left(err)
+        case Right(resp) if kind == ChatCallKind.Responses => Right(resp.toResponseSource(computeModel(originalBody).getOrElse("none")))
+        case Right(resp) => Right(resp.toSource(computeModel(originalBody).getOrElse("none")))
+      }
+    }
+  }
+
   def tryCompletion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     if (supportsCompletion) {
       completion(prompt, attrs, originalBody)

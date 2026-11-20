@@ -108,6 +108,9 @@ class LoadBalancerChatClient(provider: AiProvider, clientEnv: Env) extends KindB
   override def isCohere: Boolean = false
   override def isOpenAi: Boolean = true
   override def isAnthropic: Boolean = false
+  // the load balancer streams by streaming its targets: without it, a streamed request is served as a blocking one,
+  // and the target, asked to stream, answers events the blocking path cannot read
+  override def supportsStreaming: Boolean = true
 
   // targets are provider ids or { ref, weight, selector_expected, model } objects, possibly mixed
   private lazy val refs: Seq[LoadBalancingTarget] = provider.options.select("refs").asOpt[Seq[JsValue]].getOrElse(Seq.empty).flatMap {
@@ -239,7 +242,7 @@ class LoadBalancerChatClient(provider: AiProvider, clientEnv: Env) extends KindB
   override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     execute(prompt, attrs, originalBody) { (selected, client, body) =>
       val start = System.currentTimeMillis()
-      client.invokeStream(kind, prompt, attrs, body).map { resp =>
+      client.tryInvokeStream(kind, prompt, attrs, body).map { resp =>
         BestResponseTime.record(selected, System.currentTimeMillis() - start)
         resp
       }

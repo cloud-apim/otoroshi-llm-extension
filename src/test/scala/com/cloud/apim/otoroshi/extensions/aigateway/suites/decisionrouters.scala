@@ -72,10 +72,12 @@ class DecisionRoutersSuite extends LlmExtensionOneOtoroshiServerPerSuite {
   // model named `down` fails
   class Chats(name: String) {
     val models = new ConcurrentLinkedQueue[String]()
+    val streams = new ConcurrentLinkedQueue[String]()
     val (port, _) = createTestServerWithRoutes(name, routes => routes
       .post("/v1/chat/completions", (req, response) => req.receive().aggregate().asString().flatMap { raw =>
         val model = Json.parse(raw).select("model").asString
         models.add(model)
+        if (Json.parse(raw).select("stream").asOpt[Boolean].contains(true)) streams.add(model)
         def chunk(delta: JsObject, finish: JsValue) = "data: " + Json.obj(
           "id" -> "chatcmpl-1", "object" -> "chat.completion.chunk", "created" -> 1700000000, "model" -> model,
           "choices" -> Json.arr(Json.obj("index" -> 0, "delta" -> delta, "finish_reason" -> finish)),
@@ -101,6 +103,8 @@ class DecisionRoutersSuite extends LlmExtensionOneOtoroshiServerPerSuite {
       options = Json.obj("model" -> "a-model"),
     )
     def asked: Seq[String] = models.asScala.toSeq
+    // the models it was asked to stream
+    def streamed: Seq[String] = streams.asScala.toSeq
   }
 
   val rating = new Decisions("decision-routers-rating")
@@ -110,6 +114,7 @@ class DecisionRoutersSuite extends LlmExtensionOneOtoroshiServerPerSuite {
   val picked = new Chats("decision-routers-picked")
   val cascading = new Chats("decision-routers-cascading")
   val streamed = new Chats("decision-routers-streamed")
+  val fused = new Chats("decision-routers-fused")
 
   def ext: AiExtension = otoroshi.env.adminExtensions.extension[AiExtension].get
 
@@ -164,6 +169,11 @@ class DecisionRoutersSuite extends LlmExtensionOneOtoroshiServerPerSuite {
   ))
 
   lazy val streaming = router("streaming", Json.obj("code_router_refs" -> candidates(streamed, "small")))
+  lazy val fusion = router("fusion", Json.obj(
+    "fusion_router_refs" -> candidates(fused, "panelist"),
+    "fusion_router_judge_ref" -> fused.provider.id, "fusion_router_judge_model" -> "judge",
+    "fusion_router_synthesizer_ref" -> fused.provider.id, "fusion_router_synthesizer_model" -> "synthesizer",
+  ))
 
   // what an api key may spend, whatever serves it
   val caller = ApiKey(clientId = "key-of-decision-routers", clientSecret = "secret", clientName = "caller", authorizedEntities = Seq.empty)
@@ -176,7 +186,7 @@ class DecisionRoutersSuite extends LlmExtensionOneOtoroshiServerPerSuite {
 
   lazy val setup: Unit = {
     Seq(rating, picking).foreach(d => assert(client.forLlmEntity("decision-models").upsertEntity(d.model).awaitf(10.seconds).createdOrUpdated, s"${d.model.name} should be saved"))
-    (Seq(rated, unrated, picked, cascading, streamed).map(_.provider) ++ Seq(smart, blind, demanding, intent, failing, streaming)).foreach { p =>
+    (Seq(rated, unrated, picked, cascading, streamed, fused).map(_.provider) ++ Seq(smart, blind, demanding, intent, failing, streaming, fusion)).foreach { p =>
       assert(client.forLlmEntity("providers").upsertEntity(p).awaitf(10.seconds).createdOrUpdated, s"${p.name} should be saved")
     }
     client.forLlmEntity("ai-budgets").createRaw(budget).awaitf(10.seconds)
@@ -266,5 +276,18 @@ class DecisionRoutersSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     val chunks = resp.toOption.get.runWith(Sink.seq)(using mat).awaitf(30.seconds)
     assert(chunks.nonEmpty, "the candidate's chunks should come through")
     assertEquals(streamed.asked, Seq("small"))
+  }
+
+  test("a streamed request to the fusion-router: the panel and the judge answer blocking, the synthesizer streams") {
+    setup
+    given env: Env = otoroshi.env
+    val resp = ext.states.provider(fusion.id).flatMap(_.getChatClient()).get
+      .tryStream(ChatPrompt(Seq(ChatMessage.userStrInput("hello !"))), TypedMap.empty, Json.obj("model" -> "fusion-router", "stream" -> true))(using ec, env)
+      .awaitf(30.seconds)
+    assert(resp.isRight, s"the fusion-router should stream, got ${resp}")
+    val chunks = resp.toOption.get.runWith(Sink.seq)(using mat).awaitf(30.seconds).map(_.json(env))
+    assertEquals(chunks.flatMap(_.at("choices.0.delta.content").asOptString).mkString, "hello")
+    assertEquals(fused.asked, Seq("panelist", "judge", "synthesizer"))
+    assertEquals(fused.streamed, Seq("synthesizer"))
   }
 }

@@ -376,12 +376,14 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
       Json.obj("error" -> "no panel provider configured for the otoroshi fusion-router (set options.fusion_router_refs)").leftf
     } else {
       val cleanBody = fusionBody(originalBody)
+      // the panel and the judge answer blocking, whatever the caller asked: only the synthesizer streams
+      val askedBody = cleanBody - "stream" - "stream_options"
       val question = promptText(prompt)
       // 1. panel: query all members in parallel, keep the ones that succeed
       val panelF: Future[Seq[(String, String)]] = Future.sequence(panel.map { c =>
         c.provider.getChatClient() match {
           case None => Future.successful(Option.empty[(String, String)])
-          case Some(client) => client.call(prompt, ChildCall.attrs(attrs), cleanBody).map {
+          case Some(client) => client.call(prompt, ChildCall.attrs(attrs), askedBody).map {
             case Right(resp) => Some((s"${c.provider.provider}/${c.model}", resp.headGeneration.message.content))
             case Left(_) => None
           }.recover { case _ => None }
@@ -404,7 +406,7 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
                 ChatMessage.input("system", jsys, None, Json.obj("role" -> "system", "content" -> jsys)),
                 ChatMessage.userStrInput(juser)
               ))
-              judge.call(jprompt, ChildCall.attrs(attrs), cleanBody ++ Json.obj("temperature" -> 0)).map {
+              judge.call(jprompt, ChildCall.attrs(attrs), askedBody ++ Json.obj("temperature" -> 0)).map {
                 case Right(resp) => resp.headGeneration.message.content
                 case Left(_) => panelText
               }.recover { case _ => panelText }
@@ -443,7 +445,7 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
       case Left(err) => err.leftf
       case Right((synth, client, synthPrompt, body)) =>
         delegate(attrs, originalBody, synth, client, body)
-        client.stream(synthPrompt, attrs, body)
+        client.tryStream(synthPrompt, attrs, body)
     }
   }
 
@@ -505,6 +507,6 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
 
   override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     if (isFusion(originalBody)) fusionStream(prompt, attrs, originalBody)
-    else execute(prompt, attrs, originalBody)((client, body) => client.invokeStream(kind, prompt, attrs, body))
+    else execute(prompt, attrs, originalBody)((client, body) => client.tryInvokeStream(kind, prompt, attrs, body))
   }
 }

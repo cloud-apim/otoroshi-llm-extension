@@ -2,8 +2,8 @@ package com.cloud.apim.otoroshi.extensions.aigateway.suites
 
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{ChatClientWithCostsTracking, ChatClientWithEcoImpact}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiBudgetConsumptions, AiProvider}
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt, ChatResponse, LlmExtensionOneOtoroshiServerPerSuite}
-import org.apache.pekko.stream.scaladsl.Sink
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatCallKind, ChatGeneration, ChatMessage, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseMetadata, KindBasedChatClient, LlmExtensionOneOtoroshiServerPerSuite, OutputChatMessage}
+import org.apache.pekko.stream.scaladsl.{Sink, Source}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits.*
@@ -13,8 +13,11 @@ import reactor.core.publisher.{Flux, Mono}
 import reactor.netty.http.server.HttpServerResponse
 
 import java.util.UUID
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 import scala.concurrent.duration.DurationInt
+import scala.concurrent.{ExecutionContext, Future}
+import scala.jdk.CollectionConverters.*
 import scala.util.Try
 
 // A provider that hands the call it received over to another one (a fallback, the target of a load balancer, the
@@ -314,6 +317,45 @@ class ChatHandOverSuite extends LlmExtensionOneOtoroshiServerPerSuite {
       assertEquals(handedOver.last.select("usage").asOpt[JsObject], direct.last.select("usage").asOpt[JsObject], s"${p.name}: by its last chunk")
       assertEquals(handedOver.size, direct.size, s"${p.name}: with the chunks of a stream served directly")
     }
+  }
+
+  // the way the proxy plugins ask for a stream: `tryStream`, the `stream` flag of the caller in the body. A load
+  // balancer or a router that does not say it streams is asked blocking, and its target, asked to stream by that
+  // flag, answers events the blocking path cannot read
+  test("a streamed request to a load balancer or a router is streamed by the provider that serves it") {
+    setup
+    given env: Env = otoroshi.env
+    Seq(balancer, router).foreach { p =>
+      val before = servingCalls.get()
+      val source = Try(ext.states.provider(p.id).flatMap(_.getChatClient()).get.tryStream(prompt, TypedMap.empty, Json.obj("stream" -> true))(using ec, env).awaitf(30.seconds))
+      assert(source.toOption.exists(_.isRight), s"${p.name}: should stream, got ${source}")
+      val streamed = source.get.toOption.get.runWith(Sink.seq)(using mat).awaitf(30.seconds).map(_.json(env))
+      assertEquals(streamed.flatMap(_.at("choices.0.delta.content").asOptString).mkString, "hello", s"${p.name}: with the text of the stream")
+      assertEquals(servingCalls.get() - before, 1, s"${p.name}: in one call")
+    }
+  }
+
+  // a provider that does not stream, the target or the candidate of one handing a streamed call over to it, is
+  // asked blocking, without the stream flag of the caller, and its answer handed out as a stream
+  test("a provider that does not stream serves blocking a streamed call handed over to it") {
+    given env: Env = otoroshi.env
+    val bodies = new ConcurrentLinkedQueue[JsValue]()
+    val blocking = new KindBasedChatClient {
+      override def computeModel(payload: JsValue): Option[String] = Some(servedModel)
+      override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+        bodies.add(originalBody)
+        Right(ChatResponse(Seq(ChatGeneration(OutputChatMessage("assistant", "hello", None, Json.obj()))), ChatResponseMetadata.empty, Json.obj())).vfuture
+      }
+      override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] =
+        Left(Json.obj("error" -> "streaming not supported")).vfuture
+    }
+    val body = Json.obj("stream" -> true, "stream_options" -> Json.obj("include_usage" -> true), "temperature" -> 0)
+    val source = blocking.tryInvokeStream(ChatCallKind.Chat, prompt, TypedMap.empty, body)(using ec, env).awaitf(10.seconds)
+    assert(source.isRight, s"it should answer, got ${source}")
+    val streamed = source.toOption.get.runWith(Sink.seq)(using mat).awaitf(10.seconds).map(_.json(env))
+    assertEquals(streamed.flatMap(_.at("choices.0.delta.content").asOptString).mkString, "hello")
+    assertEquals(streamed.flatMap(_.at("choices.0.finish_reason").asOptString), Seq("stop"))
+    assertEquals(bodies.asScala.toSeq, Seq(Json.obj("temperature" -> 0)), "asked without the stream flag of the caller")
   }
 
   test("a fallback that fails is asked once") {
