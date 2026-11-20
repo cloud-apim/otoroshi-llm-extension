@@ -139,6 +139,7 @@ class AuditingSuite extends LlmExtensionOneOtoroshiServerPerSuite {
 
     await(8.seconds)
     assertEquals(messages.size, 10, "there should be 10 array of 2 messages")
+    assert(messages.mkString.contains("\"requested_model\":\"llama3.2\""), "the events should carry the model the caller asked for")
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     /////////                                  teardown                                                      ///////////
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
