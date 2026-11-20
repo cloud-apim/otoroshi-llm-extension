@@ -168,12 +168,19 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
       .map(_.withModel(provider.options.select(refKey.stripSuffix("_ref") + "_model").asOptString))
   }
 
-  private def judgeClient(cands: Seq[RouterCandidate])(using env: Env): Option[ChatClient] = {
-    auxProvider("auto_router_classifier_ref").flatMap(_.getChatClient())
+  private def judgeClient(cands: Seq[RouterCandidate])(using env: Env): Option[(AiProvider, ChatClient)] = {
+    auxProvider("auto_router_classifier_ref").flatMap(p => p.getChatClient().map(c => (p, c)))
       .orElse {
         // fallback: use the cheapest candidate as the judge
-        cands.filter(_.cost.isDefined).sortBy(_.cost.get).headOption.orElse(cands.headOption).flatMap(_.provider.getChatClient())
+        cands.filter(_.cost.isDefined).sortBy(_.cost.get).headOption.orElse(cands.headOption).flatMap(c => c.provider.getChatClient().map(cl => (c.provider, cl)))
       }
+  }
+
+  // The classifier of the auto-router, the panel and the judge of the fusion-router are part of the router, as its
+  // decision model is: a consumer allowed to call the router is allowed them. Their call is a child call of its own
+  private def childCall(attrs: TypedMap, requested: Option[String], aux: AiProvider, client: ChatClient, body: JsValue): TypedMap = {
+    ModelConstraints.delegate(attrs, ModelTarget.of(provider), requested, aux, client, body)
+    ChildCall.attrs(attrs)
   }
 
   private def parseIndex(text: String, size: Int): Option[Int] = {
@@ -198,10 +205,10 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
     }
   }
 
-  private def pickWithJudge(prompt: ChatPrompt, attrs: TypedMap, cands: Seq[RouterCandidate], tradeoff: Double)(using ec: ExecutionContext, env: Env): Future[Option[RouterCandidate]] = {
+  private def pickWithJudge(prompt: ChatPrompt, attrs: TypedMap, requested: Option[String], cands: Seq[RouterCandidate], tradeoff: Double)(using ec: ExecutionContext, env: Env): Future[Option[RouterCandidate]] = {
     judgeClient(cands) match {
       case None => Future.successful(None)
-      case Some(jclient) =>
+      case Some((judge, jclient)) =>
         val promptText = prompt.messages.map(m => s"${m.role}: ${m.wholeTextContent}").mkString("\n").take(4000)
         val candidateList = cands.zipWithIndex.map { case (c, i) =>
           val q = c.score.map(s => f"$s%.1f").getOrElse("unknown")
@@ -220,7 +227,7 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
           ChatMessage.userStrInput("User prompt to route:\n" + promptText)
         ))
         val jbody = Json.obj("temperature" -> 0, "max_tokens" -> 16)
-        jclient.call(classifierPrompt, ChildCall.attrs(attrs), jbody).map {
+        jclient.call(classifierPrompt, childCall(attrs, requested, judge, jclient, jbody), jbody).map {
           case Right(resp) => parseIndex(resp.headGeneration.message.content, cands.size).map(cands.apply)
           case Left(_) => None
         }.recover { case _ => None }
@@ -242,7 +249,7 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
         .getOrElse(7.0)
       val tradeoff = math.max(0.0, math.min(10.0, rawTradeoff))
       val fallbackOrder = tradeoffOrdered(cands, tradeoff)
-      pickWithJudge(prompt, attrs, cands, tradeoff).map {
+      pickWithJudge(prompt, attrs, originalBody.select("model").asOptString, cands, tradeoff).map {
         case Some(chosen) => chosen.provider +: fallbackOrder.filterNot(c => c.provider.id == chosen.provider.id && c.model == chosen.model).map(_.provider)
         case None => fallbackOrder.map(_.provider)
       }
@@ -278,7 +285,10 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
       case None => Future.successful(None)
       case Some((dm, client)) =>
         val opts = DecisionModelClientInputOptions(stateOf(prompt), Json.obj(name -> question))
-        ModelConstraints.delegate(attrs, ModelTarget.of(provider), requested, dm.target, opts.model)
+        // a decision model that pins its model serves that one whatever it is asked: it is the model its
+        // restrictions are checked for, its fallback still seeing the one it was asked
+        val models = (opts.model +: (if (dm.allowConfigOverride) Seq.empty else Seq(dm.defaultModel))).distinct
+        models.foreach(model => ModelConstraints.delegate(attrs, ModelTarget.of(provider), requested, dm.target, model))
         client.decide(opts, opts.json.asObject, ChildCall.attrs(attrs)).map {
           case Right(res) => res.answers.select(name).asOpt[JsObject]
           case Left(_) => None
@@ -380,12 +390,13 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
       val cleanBody = fusionBody(originalBody)
       // the panel and the judge answer blocking, whatever the caller asked: only the synthesizer streams
       val askedBody = cleanBody - "stream" - "stream_options"
+      val requested = originalBody.select("model").asOptString
       val question = promptText(prompt)
       // 1. panel: query all members in parallel, keep the ones that succeed
       val panelF: Future[Seq[(String, String)]] = Future.sequence(panel.map { c =>
         c.provider.getChatClient() match {
           case None => Future.successful(Option.empty[(String, String)])
-          case Some(client) => client.call(prompt, ChildCall.attrs(attrs), askedBody).map {
+          case Some(client) => client.call(prompt, childCall(attrs, requested, c.provider, client, askedBody), askedBody).map {
             case Right(resp) => Some((s"${c.provider.provider}/${c.model}", resp.headGeneration.message.content))
             case Left(_) => None
           }.recover { case _ => None }
@@ -401,14 +412,15 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
           // 2. judge: structured comparison of the panel responses (best-effort, falls back to raw panel text)
           val judgeAnalysisF: Future[String] = fusionAuxClient("fusion_router_judge_ref", panel) match {
             case None => Future.successful(panelText)
-            case Some((_, judge)) =>
+            case Some((judgeProvider, judge)) =>
               val jsys = "You are an impartial judge in a multi-model deliberation. Compare the panel responses below — do NOT merge or rewrite them. Identify: (1) consensus points all/most agree on (higher confidence), (2) disagreements, (3) unique insights from individual responses, (4) gaps or blind spots none addressed. Return a concise structured analysis."
               val juser = s"User request:\n${question}\n\nPanel responses:\n${panelText}"
               val jprompt = ChatPrompt(Seq(
                 ChatMessage.input("system", jsys, None, Json.obj("role" -> "system", "content" -> jsys)),
                 ChatMessage.userStrInput(juser)
               ))
-              judge.call(jprompt, ChildCall.attrs(attrs), askedBody ++ Json.obj("temperature" -> 0)).map {
+              val judgeBody = askedBody ++ Json.obj("temperature" -> 0)
+              judge.call(jprompt, childCall(attrs, requested, judgeProvider, judge, judgeBody), judgeBody).map {
                 case Right(resp) => resp.headGeneration.message.content
                 case Left(_) => panelText
               }.recover { case _ => panelText }

@@ -47,9 +47,14 @@ object ModelConstraints {
 
   private def delegationOf(target: ModelTarget, model: Option[String]): String = s"${target.id}\u0000${model.getOrElse("")}"
 
-  // a child call made on behalf of the outer one is allowed what the outer one was handed
+  // a child call made on behalf of the outer one is allowed what the outer one was handed, a copy of it: what the
+  // child call hands over in turn (an emulated decision model to its text provider) is not handed to the outer one
   def inherit(outer: TypedMap, child: TypedMap): Unit =
-    outer.get(DelegatedKey).foreach(set => child.put(DelegatedKey -> set))
+    outer.get(DelegatedKey).foreach { set =>
+      val copy = java.util.concurrent.ConcurrentHashMap.newKeySet[String]()
+      copy.addAll(set)
+      child.put(DelegatedKey -> copy)
+    }
 
   private def delegated(attrs: TypedMap, target: ModelTarget, model: Option[String]): Boolean =
     attrs.get(DelegatedKey).exists(_.contains(delegationOf(target, model)))

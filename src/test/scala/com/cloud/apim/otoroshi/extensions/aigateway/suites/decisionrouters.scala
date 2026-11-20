@@ -1,6 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.suites
 
-import com.cloud.apim.otoroshi.extensions.aigateway.decorators.OtoroshiRouterChatClient
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{ChildCall, ModelConstraints, ModelTarget, OtoroshiRouterChatClient}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiBudgetConsumptions, AiProvider, DecisionModel}
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt, LlmExtensionOneOtoroshiServerPerSuite}
 import otoroshi.env.Env
@@ -115,6 +115,11 @@ class DecisionRoutersSuite extends LlmExtensionOneOtoroshiServerPerSuite {
   val cascading = new Chats("decision-routers-cascading")
   val streamed = new Chats("decision-routers-streamed")
   val fused = new Chats("decision-routers-fused")
+  // the routers asked with a key allowed the router only
+  val pinnedRating = new Decisions("decision-routers-pinned")
+  val pinnedChats = new Chats("decision-routers-pinned-chats")
+  val guardedChats = new Chats("decision-routers-guarded")
+  val classifiedChats = new Chats("decision-routers-classified")
 
   def ext: AiExtension = otoroshi.env.adminExtensions.extension[AiExtension].get
 
@@ -169,6 +174,18 @@ class DecisionRoutersSuite extends LlmExtensionOneOtoroshiServerPerSuite {
   ))
 
   lazy val streaming = router("streaming", Json.obj("code_router_refs" -> candidates(streamed, "small")))
+  // a decision model serving its own model whatever it is asked
+  lazy val pinnedModel = pinnedRating.model.copy(config = pinnedRating.model.config ++ Json.obj("options" -> Json.obj("model" -> "jev-test", "allow_config_override" -> false)))
+  lazy val pinned = router("pinned", Json.obj("decision_model_ref" -> pinnedModel.id, "smart_router_refs" -> candidates(pinnedChats, best, cheap, middle)))
+  lazy val guarded = router("guarded", Json.obj(
+    "fusion_router_refs" -> candidates(guardedChats, "panelist"),
+    "fusion_router_judge_ref" -> guardedChats.provider.id, "fusion_router_judge_model" -> "judge",
+    "fusion_router_synthesizer_ref" -> guardedChats.provider.id, "fusion_router_synthesizer_model" -> "synthesizer",
+  ))
+  lazy val classified = router("classified", Json.obj(
+    "auto_router_refs" -> candidates(classifiedChats, "answerer"),
+    "auto_router_classifier_ref" -> classifiedChats.provider.id, "auto_router_classifier_model" -> "classifier",
+  ))
   lazy val fusion = router("fusion", Json.obj(
     "fusion_router_refs" -> candidates(fused, "panelist"),
     "fusion_router_judge_ref" -> fused.provider.id, "fusion_router_judge_model" -> "judge",
@@ -185,8 +202,8 @@ class DecisionRoutersSuite extends LlmExtensionOneOtoroshiServerPerSuite {
   )
 
   lazy val setup: Unit = {
-    Seq(rating, picking).foreach(d => assert(client.forLlmEntity("decision-models").upsertEntity(d.model).awaitf(10.seconds).createdOrUpdated, s"${d.model.name} should be saved"))
-    (Seq(rated, unrated, picked, cascading, streamed, fused).map(_.provider) ++ Seq(smart, blind, demanding, intent, failing, streaming, fusion)).foreach { p =>
+    Seq(rating, picking).map(_.model).appended(pinnedModel).foreach(d => assert(client.forLlmEntity("decision-models").upsertEntity(d).awaitf(10.seconds).createdOrUpdated, s"${d.name} should be saved"))
+    (Seq(rated, unrated, picked, cascading, streamed, fused, pinnedChats, guardedChats, classifiedChats).map(_.provider) ++ Seq(smart, blind, demanding, intent, failing, streaming, fusion, pinned, guarded, classified)).foreach { p =>
       assert(client.forLlmEntity("providers").upsertEntity(p).awaitf(10.seconds).createdOrUpdated, s"${p.name} should be saved")
     }
     client.forLlmEntity("ai-budgets").createRaw(budget).awaitf(10.seconds)
@@ -301,5 +318,46 @@ class DecisionRoutersSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     ask(smart, "smart-router", "research the proof of this theorem", TypedMap.empty.put(_root_.otoroshi.plugins.Keys.ApiKeyKey -> restricted))
     assertEquals(rating.asked.size, before + 1, "the decision model is asked on behalf of the key")
     assertEquals(rated.asked.last, best, "and its rating is followed")
+  }
+
+  // a key allowed `<router>/<model>` and nothing else
+  def onlyRouter(router: AiProvider, model: String): TypedMap = TypedMap.empty.put(_root_.otoroshi.plugins.Keys.ApiKeyKey -> ApiKey(
+    clientId = s"key-of-${router.name}", clientSecret = "secret", clientName = s"${router.name} only", authorizedEntities = Seq.empty,
+    metadata = Map("ai_models_include" -> s"${router.name}/${model}"),
+  ))
+
+  test("smart-router: a key allowed the router only gets the decision of a decision model that pins its model") {
+    setup
+    ask(pinned, "smart-router", "research the proof of this theorem", onlyRouter(pinned, "smart-router"))
+    assertEquals(pinnedRating.asked.size, 1, "the decision model is asked on behalf of the key")
+    assertEquals(pinnedRating.asked.head.select("model").asOptString, Some("jev-test"), "for the model it pins")
+    assertEquals(pinnedChats.asked, Seq(best), "and its rating is followed")
+  }
+
+  test("fusion-router: a key allowed the router only gets its panel, its judge and its synthesizer") {
+    setup
+    ask(guarded, "fusion-router", "hello !", onlyRouter(guarded, "fusion-router"))
+    assertEquals(guardedChats.asked, Seq("panelist", "judge", "synthesizer"))
+  }
+
+  test("auto-router: a key allowed the router only gets its classifier") {
+    setup
+    ask(classified, "auto-router", "hello !", onlyRouter(classified, "auto-router"))
+    assertEquals(classifiedChats.asked, Seq("classifier", "answerer"))
+  }
+
+  // what a child call is handed in turn stays its own: an emulated decision model handing its decision over to
+  // its text provider does not hand that provider to the call that asked for the decision
+  test("a child call is allowed what its outer call was handed, and hands nothing back") {
+    setup
+    val outer = onlyRouter(smart, "smart-router")
+    val decision = rating.model.target
+    val text = ModelTarget.of(rated.provider)
+    ModelConstraints.delegate(outer, ModelTarget.of(smart), Some("smart-router"), decision, None)
+    val child = ChildCall.attrs(outer)
+    assert(ModelConstraints.allows(decision, None, child), "the child call is allowed the decision model")
+    ModelConstraints.delegate(child, decision, None, text, Some("a-model"))
+    assert(ModelConstraints.allows(text, Some("a-model"), child), "the child call hands the text provider over")
+    assert(!ModelConstraints.allows(text, Some("a-model"), outer), "not the outer call")
   }
 }
