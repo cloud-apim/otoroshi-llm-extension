@@ -32,6 +32,7 @@ Beyond audit events, every AI and MCP operation also feeds Otoroshi's always-on 
 | `provider` | string | The provider entity ID |
 | `duration` | number | Request duration in milliseconds |
 | `model` | string | The model used for the request |
+| `requested_model` | string \| null | The model the request named to this provider, as the caller wrote it after the provider prefix: the routing model or the [named endpoint](/docs/llm-gateway/otoroshi-router#named-endpoints) of a router (`assistant` for `my-router/assistant`), the model asked for a provider that serves another one. `null` when the request names none, such as the candidate a router hands the call to. A plain string: an exporter can keep it to bill or count the models your consumers ask for, without keeping anything of the prompt |
 | `rate_limit` | object | Rate limit information from the provider (`requests_limit`, `requests_remaining`, `tokens_limit`, `tokens_remaining`) |
 | `usage` | object | Token usage (`prompt_tokens`, `generation_tokens`, `reasoning_tokens`) |
 | `error` | object/null | Error details if the request failed, `null` on success |
@@ -280,6 +281,7 @@ Here is a full example of a `LLMUsageAudit` event for a chat completion request:
   "provider": "provider_10bbc76d-7cd8-4cb7-b760-61e749a1b691",
   "duration": 415,
   "model": "gpt-4o-mini",
+  "requested_model": "gpt-4o-mini",
   "rate_limit": {
     "requests_limit": 10000,
     "requests_remaining": 9999,
